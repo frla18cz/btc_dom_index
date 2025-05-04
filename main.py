@@ -7,9 +7,10 @@ from dotenv import load_dotenv
 # Import configuration and fetcher
 from config.config import (
     LIMIT, TSYM, REQUEST_TIMEOUT, API_SLEEP_INTERVAL, TOP_N,
-    EXCLUDED_SYMBOLS, OUTPUT_FILENAME, START, END
+    EXCLUDED_SYMBOLS, OUTPUT_FILENAME, START, END, DB_PATH
 )
 from fetcher import CryptoCompareFetcher
+from storage import Storage
 
 # --- Main Execution Block ---
 if __name__ == "__main__":
@@ -30,11 +31,15 @@ if __name__ == "__main__":
         excluded_symbols=EXCLUDED_SYMBOLS
     )
 
+    # Initialize persistent storage for snapshots and token metadata
+    storage = Storage(DB_PATH)
     frames = []
     current_time = START
     while current_time <= END:
         snapshot_df = fetcher.fetch_snapshot_data(current_time)
         if not snapshot_df.empty:
+            # Persist snapshot to database
+            storage.store_snapshot(snapshot_df)
             frames.append(snapshot_df)
 
         current_time += dt.timedelta(days=7)
@@ -47,3 +52,5 @@ if __name__ == "__main__":
         print(f"✔️ Done – saved rows: {len(weights)} to {OUTPUT_FILENAME}")
     else:
         print("❌ No data fetched.")
+    # Close storage connection
+    storage.close()

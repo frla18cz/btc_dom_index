@@ -10,6 +10,7 @@ EXCLUDED_SYMBOLS = ['BTC', 'USDT', 'USDC', 'DAI', 'BUSD','USDE', 'USDS', 'WBETH'
 
 # --- Output Configuration ---
 OUTPUT_FILENAME = "btcdom_top20_weights.csv"
+DB_PATH = "btcdom_data.db"
 
 # --- Time Range Configuration ---
 START = dt.datetime(2025, 2, 17, 8)  # Start date for fetching data
