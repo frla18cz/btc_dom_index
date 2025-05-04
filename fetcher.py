@@ -70,8 +70,9 @@ class CryptoCompareFetcher:
         else:
             df['price_usd'] = None # Set to None if BTC/USD price is not available
 
-        # Return DataFrame including the new USD price column
-        return df[['sym', 'mcap_btc', 'price_btc', 'price_usd', 'weight']]
+        # Return DataFrame including the new USD price column and BTC/USD price
+        df['btc_price_usd'] = btc_usd_price # Add the BTC/USD price as a new column
+        return df[['sym', 'mcap_btc', 'price_btc', 'price_usd', 'btc_price_usd', 'weight']]
 
     def fetch_snapshot_data(self, snapshot_dt: dt.datetime) -> pd.DataFrame:
         """
