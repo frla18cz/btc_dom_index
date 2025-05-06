@@ -139,3 +139,4 @@ cython_debug/
 
 # Output file
 btcdom_top20_weights.csv
+*.csv
