@@ -67,13 +67,6 @@ class CryptoCompareFetcher:
               .loc[lambda d: ~d.sym.isin(self.excluded_symbols)] # Exclude specified symbols
               .nlargest(self.top_n, 'mcap_btc')) # Select top N by market cap
 
-        # Calculate weights relative to the selected top N
-        total_mcap = df.mcap_btc.sum()
-        if total_mcap > 0:
-            df['weight'] = df.mcap_btc / total_mcap
-        else:
-            df['weight'] = 0.0 # Avoid division by zero if total market cap is zero
-
         # Calculate USD price if BTC/USD price is available
         if btc_usd_price is not None:
             df['price_usd'] = df['price_btc'] * btc_usd_price
@@ -86,7 +79,7 @@ class CryptoCompareFetcher:
         df = df.reset_index(drop=True)
         df['rank'] = df.index + 1
         # Return DataFrame with relevant columns
-        return df[['sym', 'mcap_btc', 'price_btc', 'price_usd', 'btc_price_usd', 'weight', 'rank']]
+        return df[['sym', 'mcap_btc', 'price_btc', 'price_usd', 'btc_price_usd', 'rank']]
 
     def fetch_snapshot_data(self, snapshot_dt: dt.datetime) -> pd.DataFrame:
         """
