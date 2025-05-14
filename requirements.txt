@@ -3,3 +3,8 @@ requests
 python-dateutil
 python-dotenv
 ace-tools
+flask
+gunicorn
+matplotlib
+playwright
+tqdm

@@ -12,5 +12,5 @@ EXCLUDED_SYMBOLS = ['BTC', 'USDT', 'USDC', 'DAI', 'BUSD','USDE', 'USDS', 'WBETH'
 OUTPUT_FILENAME = "btcdom_top50_weights.csv"
 
 # --- Time Range Configuration ---
-START = dt.datetime(2024, 1, 1, 8)  # Start date for fetching data
-END = dt.datetime(2025, 1, 1, 8)  # End date for fetching data
+START = dt.datetime(2025, 1, 1, 8)  # Start date for fetching data
+END = dt.datetime(2025, 5, 1, 8)  # End date for fetching data
