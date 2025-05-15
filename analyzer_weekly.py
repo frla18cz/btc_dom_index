@@ -7,24 +7,54 @@ from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.ticker import ScalarFormatter
+import datetime as dt
 
-# Configuration
+# Import configuration
+from config.config import (
+    EXCLUDED_SYMBOLS,
+    BACKTEST_START_DATE,
+    BACKTEST_END_DATE,
+    BACKTEST_INITIAL_CAPITAL,
+    BACKTEST_BTC_WEIGHT,
+    BACKTEST_ALT_WEIGHT,
+    BACKTEST_TOP_N_ALTS
+)
+
+# Configuration with defaults from config.py
 CSV_PATH = Path("top100_weekly_2021-2025.csv")
-START_CAP = 100_000.0
-BTC_W = 0.5
-ALT_W = 0.5
-TOP_N = 10
-EXCLUDED = ["BTC", "WBTC"]
+START_CAP = BACKTEST_INITIAL_CAPITAL
+BTC_W = BACKTEST_BTC_WEIGHT
+ALT_W = BACKTEST_ALT_WEIGHT
+TOP_N = BACKTEST_TOP_N_ALTS
+EXCLUDED = EXCLUDED_SYMBOLS
+# Date range for backtesting
+START_DATE = BACKTEST_START_DATE
+END_DATE = BACKTEST_END_DATE
 
 
-def load_and_prepare(csv_path: Path) -> pd.DataFrame:
+def load_and_prepare(csv_path: Path, start_date=None, end_date=None) -> pd.DataFrame:
     """
     Load CSV from csv_path, clean numeric columns, compute price_btc and mcap_btc columns.
-    Returns DataFrame compatible with backtest_rank_altbtc_short.
+    Optionally filters data by date range.
+    
+    Args:
+        csv_path: Path to the CSV file
+        start_date: Optional start date to filter data (inclusive)
+        end_date: Optional end date to filter data (inclusive)
+        
+    Returns:
+        DataFrame compatible with backtest_rank_altbtc_short.
     """
     df = pd.read_csv(csv_path)
     # parse date
     df["snapshot_date"] = pd.to_datetime(df["snapshot_date"])
+    
+    # Filter by date range if provided
+    if start_date:
+        df = df[df["snapshot_date"] >= pd.Timestamp(start_date)]
+    if end_date:
+        df = df[df["snapshot_date"] <= pd.Timestamp(end_date)]
+        
     # rename to match old analyzer expectations
     df = df.rename(
         columns={
@@ -64,7 +94,25 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                                btc_w: float = BTC_W,
                                alt_w: float = ALT_W,
                                top_n: int = TOP_N,
+                               excluded: list = None,
                                start_cap: float = START_CAP) -> tuple[pd.DataFrame, dict]:
+    """
+    Backtest the BTC long vs ALT short strategy.
+    
+    Args:
+        df: DataFrame with prepared cryptocurrency data
+        btc_w: Weight of BTC position (0-1)
+        alt_w: Weight of ALT position (0-1)
+        top_n: Number of top altcoins to include in the short basket
+        excluded: List of symbols to exclude from the short basket
+        start_cap: Initial capital in USD
+        
+    Returns:
+        Tuple of (performance DataFrame, summary dictionary)
+    """
+    if excluded is None:
+        excluded = EXCLUDED
+        
     weeks = sorted(df["rebalance_ts"].unique())
     equity = start_cap
 
@@ -77,7 +125,8 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
 
     print("--- Backtest Start ---")
     print(f"Strategy: {btc_w * 100}% Long BTC/USD, {alt_w * 100}% Short ALT/BTC (Top {top_n})")
-    print(f"Excluded from Alts: {EXCLUDED}")
+    print(f"Date Range: {pd.Timestamp(weeks[0]).date()} to {pd.Timestamp(weeks[-1]).date()}")
+    print(f"Excluded from Alts: {excluded}")
     print(f"Initial Equity: {start_cap:,.2f} USD")
     print("-" * 50)
 
@@ -111,7 +160,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
             print(f"  BTC Long: Qty={btc_qty:.6f} BTC @ ${btc_price0:,.2f}/BTC | Value=${btc_qty * btc_price0:,.2f}")
 
             alt_notional_usd_target = alt_w * equity
-            alts_df_t0 = w0[~w0.index.isin(EXCLUDED)].nsmallest(top_n, "rank")
+            alts_df_t0 = w0[~w0.index.isin(excluded)].nsmallest(top_n, "rank")
             actual_alt_usd_value_total = 0.0
             temp_alt_qty: dict[str, float] = {}
             if not alts_df_t0.empty:
@@ -180,7 +229,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         # rebalance
         btc_qty = (btc_w * equity) / btc_price1
         alt_notional_usd_target = alt_w * equity
-        alts_df_t1 = w1[~w1.index.isin(EXCLUDED)].nsmallest(top_n, "rank")
+        alts_df_t1 = w1[~w1.index.isin(excluded)].nsmallest(top_n, "rank")
         new_alt_qty: dict[str, float] = {}
         actual_alt_usd_value_total = 0.0
         if not alts_df_t1.empty:
@@ -225,15 +274,22 @@ def main():
     if not CSV_PATH.exists():
         print(f"CSV not found: {CSV_PATH}")
         return
-    df = load_and_prepare(CSV_PATH)
+        
+    print(f"Loading data from {CSV_PATH}")
+    print(f"Date range: {START_DATE.date()} to {END_DATE.date()}")
+    
+    df = load_and_prepare(CSV_PATH, START_DATE, END_DATE)
     print(f"Loaded {len(df)} rows over {df['rebalance_ts'].nunique()} weeks")
+    
     perf, summary = backtest_rank_altbtc_short(df)
+    
     if summary:
         print("\n--- Summary ---")
         print(f"Cumulative BTC P/L : {summary['cum_btc_pnl']:+,.2f} USD")
         print(f"Cumulative ALT P/L : {summary['cum_alt_pnl']:+,.2f} USD ({summary['cum_alt_pnl_btc']:+.6f} BTC)")
         print(f"Final equity       : {summary['final_equity']:,.2f} USD")
         print(f"Final equiv        : {summary['btc_equiv']:.6f} BTC")
+        
     # plot
     if not perf.empty and "Equity_USD" in perf.columns:
         plot_data = perf.dropna(subset=["Equity_USD", "Date"])
@@ -243,11 +299,16 @@ def main():
             ymin = max(0, ymin)
             if ymin >= ymax:
                 ymax = ymin * 1.2 if ymin > 0 else START_CAP * 1.1
+                
             fmt = ScalarFormatter(useOffset=False)
             fmt.set_scientific(False)
             fig, ax = plt.subplots(figsize=(12, 6))
             ax.plot(plot_data["Date"], plot_data["Equity_USD"], marker=".", linestyle="-")
-            ax.set_title(f"{BTC_W*100:.0f}% BTC long vs {ALT_W*100:.0f}% ALT short (Top {TOP_N})")
+            
+            title = f"{BTC_W*100:.0f}% BTC long vs {ALT_W*100:.0f}% ALT short (Top {TOP_N})"
+            date_range = f"[{START_DATE.date()} to {END_DATE.date()}]"
+            ax.set_title(f"{title}\n{date_range}")
+            
             ax.set_xlabel("Date")
             ax.set_ylabel("Equity (USD)")
             ax.set_ylim(ymin, ymax)
@@ -256,6 +317,7 @@ def main():
             ax.minorticks_on()
             ax.yaxis.set_major_formatter(fmt)
             ax.axhline(START_CAP, color="red", linestyle="--", linewidth=1)
+            
             final_pnl = summary["final_equity"] - START_CAP
             perc = (final_pnl / START_CAP) * 100 if START_CAP else 0
             plt.text(0.02, 0.02, f"Total PNL: ${final_pnl:.2f} ({perc:.2f}%)",
