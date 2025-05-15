@@ -43,6 +43,14 @@ python analyzer_weekly.py
 ```
 This will load data from `top100_weekly_2021-2025.csv`, run a backtest of the strategy, and display a performance chart.
 
+### Streamlit Web App
+
+**Run the Streamlit web app for interactive backtesting**
+```bash
+streamlit run app.py
+```
+This will launch a web interface that allows you to configure and run the backtesting strategy with custom parameters.
+
 ## Code Architecture
 
 The project follows a modular architecture:
@@ -58,6 +66,12 @@ The project follows a modular architecture:
      - `load_and_prepare()`: Data cleaning and preparation
      - `backtest_rank_altbtc_short()`: Core backtesting algorithm
      - Visualization code for plotting equity curves
+
+4. **Web Interface Layer**
+   - `app.py`: Streamlit web application that provides an interactive UI for the backtesting system
+     - Configurable parameters through the sidebar
+     - Visual presentation of backtest results
+     - Multiple views including summary, charts, and detailed data
 
 ## Strategy Logic
 

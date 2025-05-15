@@ -141,3 +141,17 @@ cython_debug/
 btcdom_top20_weights.csv
 *.csv
 *.json
+
+# Project-specific
+snapshots/
+api_responses/
+*_weekly_*.csv
+
+# Streamlit specific
+.streamlit/
+
+# Playwright browser binaries
+playwright-browsers/
+
+# Don't ignore reports
+!reports/

@@ -8,3 +8,5 @@ gunicorn
 matplotlib
 playwright
 tqdm
+streamlit
+tabulate
