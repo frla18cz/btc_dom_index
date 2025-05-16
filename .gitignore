@@ -139,13 +139,15 @@ cython_debug/
 
 # Output file
 btcdom_top20_weights.csv
+# Don't ignore necessary data file
+!top100_weekly_2021-2025.csv
+# Ignore other CSV files
 *.csv
 *.json
 
 # Project-specific
 snapshots/
 api_responses/
-*_weekly_*.csv
 
 # Streamlit specific
 .streamlit/
