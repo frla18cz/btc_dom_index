@@ -203,8 +203,11 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
     detailed_positions = []
     cum_btc_pnl = cum_alt_pnl = 0.0
     
+    # Calculate total leverage
+    total_leverage = btc_w + alt_w
     print(f"\n========== BACKTEST: {btc_w*100:.0f}% BTC + {alt_w*100:.0f}% ALT Short (Top {top_n}) ==========")
     print(f"Date Range: {pd.Timestamp(weeks[0]).date()} to {pd.Timestamp(weeks[-1]).date()}")
+    print(f"Total Leverage: {total_leverage:.2f}x")
     print(f"Excluded Tokens: {', '.join(sorted(excluded))}")
     print(f"Initial Capital: ${start_cap:,.2f} USD")
 
@@ -851,15 +854,9 @@ def plot_equity_curve(perf_df: pd.DataFrame, summary: dict, start_date: dt.datet
             ax1.plot(plot_data["Date"], plot_data["Equity_USD"], marker=".", linestyle="-", 
                     color='blue', linewidth=2, label="Portfolio Value")
             
-            # Plot BTC buy-and-hold for comparison
-            if "BTC_Price_USD" in plot_data.columns:
-                initial_btc_price = plot_data["BTC_Price_USD"].iloc[0]
-                btc_qty = START_CAP / initial_btc_price
-                btc_value = plot_data["BTC_Price_USD"] * btc_qty
-                ax1.plot(plot_data["Date"], btc_value, marker="", linestyle="--", 
-                        color='orange', linewidth=1.5, label="BTC Buy & Hold")
-            
-            title = f"{BTC_W*100:.0f}% BTC long vs {ALT_W*100:.0f}% ALT short (Top {TOP_N})"
+            # Calculate total leverage for the title
+            total_leverage = btc_w + alt_w
+            title = f"{btc_w*100:.0f}% BTC long + {alt_w*100:.0f}% ALT short (Top {top_n}, {total_leverage:.1f}x leverage)"
             date_range = f"[{start_date.date()} to {end_date.date()}]"
             ax1.set_title(f"{title}\n{date_range}", fontsize=14)
             
@@ -997,7 +994,9 @@ def export_detailed_report(perf_df: pd.DataFrame, summary: dict, detailed_df: pd
     summary_file = REPORTS_DIR / f"summary_{timestamp}.txt"
     with open(summary_file, "w") as f:
         f.write(f"Backtest Summary: {start_date.date()} to {end_date.date()}\n")
-        f.write(f"Strategy: {BTC_W*100:.0f}% BTC long vs {ALT_W*100:.0f}% ALT short (Top {TOP_N})\n\n")
+        total_leverage = btc_w + alt_w
+        f.write(f"Strategy: {btc_w*100:.0f}% BTC long + {alt_w*100:.0f}% ALT short (Top {top_n})\n")
+        f.write(f"Total Leverage: {total_leverage:.2f}x\n\n")
         
         f.write("Contribution Analysis:\n")
         f.write(f"BTC Long P/L:      ${summary['cum_btc_pnl']:+,.2f}\n")
