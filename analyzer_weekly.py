@@ -854,11 +854,24 @@ def plot_equity_curve(perf_df: pd.DataFrame, summary: dict, start_date: dt.datet
             ax1.plot(plot_data["Date"], plot_data["Equity_USD"], marker=".", linestyle="-", 
                     color='blue', linewidth=2, label="Portfolio Value")
             
-            # Calculate total leverage for the title
-            total_leverage = btc_w + alt_w
-            title = f"{btc_w*100:.0f}% BTC long + {alt_w*100:.0f}% ALT short (Top {top_n}, {total_leverage:.1f}x leverage)"
+            # Get strategy parameters from the display name in summary
+            strategy_title = f"Equity Curve: {start_date.date()} to {end_date.date()}"
+            
+            # Check if we have BtcQty and AltShortTarget_USD in the dataframe to calculate weights
+            if "BtcQty" in plot_data.columns and "AltShortTarget_USD" in plot_data.columns and "Equity_USD" in plot_data.columns:
+                # Take values from the first row to get the strategy parameters
+                first_row = plot_data.iloc[0]
+                if "BTC_Price_USD" in first_row and first_row["BTC_Price_USD"] > 0:
+                    btc_value = first_row["BtcQty"] * first_row["BTC_Price_USD"]
+                    btc_weight = btc_value / first_row["Equity_USD"] if first_row["Equity_USD"] > 0 else 0
+                    alt_weight = first_row["AltShortTarget_USD"] / first_row["Equity_USD"] if first_row["Equity_USD"] > 0 else 0
+                    top_n = int(first_row["AltShortCount"]) if "AltShortCount" in first_row else 0
+                    total_leverage = btc_weight + alt_weight
+                    
+                    strategy_title = f"{btc_weight*100:.0f}% BTC long + {alt_weight*100:.0f}% ALT short (Top {top_n}, {total_leverage:.1f}x leverage)"
+            
             date_range = f"[{start_date.date()} to {end_date.date()}]"
-            ax1.set_title(f"{title}\n{date_range}", fontsize=14)
+            ax1.set_title(f"{strategy_title}\n{date_range}", fontsize=14)
             
             ax1.set_xlabel("")  # We'll put the label on the bottom plot
             ax1.set_ylabel("Equity (USD)", fontsize=12)
@@ -941,8 +954,23 @@ def plot_btc_vs_alts(perf_df: pd.DataFrame) -> plt.Figure:
                 marker="", linestyle="-", color='green', linewidth=2, 
                 label="Total Cumulative P/L")
         
+        # Create a strategy description from the data
+        strategy_title = "BTC Long vs ALT Short - Cumulative P/L Contribution"
+        
+        # Check if we have weights in the data
+        if "BtcQty" in perf_df.columns and "AltShortTarget_USD" in perf_df.columns and "Equity_USD" in perf_df.columns:
+            # Take values from the first row to get the strategy parameters
+            first_row = perf_df.iloc[0]
+            if "BTC_Price_USD" in first_row and first_row["BTC_Price_USD"] > 0:
+                btc_value = first_row["BtcQty"] * first_row["BTC_Price_USD"]
+                btc_weight = btc_value / first_row["Equity_USD"] if first_row["Equity_USD"] > 0 else 0
+                alt_weight = first_row["AltShortTarget_USD"] / first_row["Equity_USD"] if first_row["Equity_USD"] > 0 else 0
+                total_leverage = btc_weight + alt_weight
+                
+                strategy_title = f"BTC Long ({btc_weight*100:.0f}%) vs ALT Short ({alt_weight*100:.0f}%) - P/L Contribution ({total_leverage:.1f}x leverage)"
+        
         # Style the plot
-        ax.set_title("BTC Long vs ALT Short - Cumulative P/L Contribution", fontsize=14)
+        ax.set_title(strategy_title, fontsize=14)
         ax.set_xlabel("Date", fontsize=12)
         ax.set_ylabel("Cumulative P/L (USD)", fontsize=12)
         
@@ -994,8 +1022,28 @@ def export_detailed_report(perf_df: pd.DataFrame, summary: dict, detailed_df: pd
     summary_file = REPORTS_DIR / f"summary_{timestamp}.txt"
     with open(summary_file, "w") as f:
         f.write(f"Backtest Summary: {start_date.date()} to {end_date.date()}\n")
-        total_leverage = btc_w + alt_w
-        f.write(f"Strategy: {btc_w*100:.0f}% BTC long + {alt_w*100:.0f}% ALT short (Top {top_n})\n")
+        
+        # Extract strategy parameters from performance data if available
+        btc_weight = ALT_weight = top_n_alts = None
+        total_leverage = 0
+        
+        if not perf_df.empty and "BtcQty" in perf_df.columns and "AltShortTarget_USD" in perf_df.columns:
+            first_row = perf_df.iloc[0]
+            if "BTC_Price_USD" in first_row and first_row["BTC_Price_USD"] > 0:
+                btc_value = first_row["BtcQty"] * first_row["BTC_Price_USD"]
+                btc_weight = btc_value / first_row["Equity_USD"] if first_row["Equity_USD"] > 0 else 0
+                ALT_weight = first_row["AltShortTarget_USD"] / first_row["Equity_USD"] if first_row["Equity_USD"] > 0 else 0
+                top_n_alts = int(first_row["AltShortCount"]) if "AltShortCount" in first_row else 0
+                total_leverage = btc_weight + ALT_weight
+        
+        # Fallback to global constants if we couldn't extract from data
+        if btc_weight is None:
+            btc_weight = BTC_W
+            ALT_weight = ALT_W
+            top_n_alts = TOP_N
+            total_leverage = btc_weight + ALT_weight
+        
+        f.write(f"Strategy: {btc_weight*100:.0f}% BTC long + {ALT_weight*100:.0f}% ALT short (Top {top_n_alts})\n")
         f.write(f"Total Leverage: {total_leverage:.2f}x\n\n")
         
         f.write("Contribution Analysis:\n")
