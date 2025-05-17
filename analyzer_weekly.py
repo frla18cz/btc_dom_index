@@ -33,9 +33,9 @@ EXCLUDED = EXCLUDED_SYMBOLS
 # Date range for backtesting
 START_DATE = BACKTEST_START_DATE
 END_DATE = BACKTEST_END_DATE
-# Output directory for detailed reports - pouze nejnovější verze
+# Output directory for detailed reports
 REPORTS_DIR = Path("reports")
-# Přepsat všechny reporty při každém běhu
+# Overwrite all reports on each run
 OVERWRITE_REPORTS = True
 
 
@@ -98,23 +98,11 @@ def load_and_prepare(csv_path: Path, start_date=None, end_date=None) -> pd.DataF
     return df
 
 
-def print_header(title, width=80):
-    """Print a formatted header with a title."""
-    print("\n" + "=" * width)
-    print(f"{title:^{width}}")
-    print("=" * width)
-
-
 def print_section(title, width=80):
     """Print a formatted section header."""
     print("\n" + "-" * width)
     print(f"{title:^{width}}")
     print("-" * width)
-
-
-def format_portfolio_table(data, headers):
-    """Format portfolio data as a pretty table."""
-    return tabulate(data, headers=headers, tablefmt="grid", floatfmt=".6f")
 
 
 def print_alt_portfolio_table(alt_data, weights, values, title):
@@ -136,20 +124,20 @@ def print_alt_portfolio_table(alt_data, weights, values, title):
         value = values.get(sym, 0)
         value_pct = (value / total_value * 100) if total_value > 0 else 0
         
-        # Ujistíme se, že je hodnota 'rank' číslo a ne metoda
+        # Ensure the 'rank' value is a number not a method
         rank = data.get('rank', 'N/A')
         if callable(rank):
             rank = int(data.get('rank_int', 0))
         
         row = [
             sym,  # Symbol
-            rank,  # Rank (ujistíme se, že je to číslo)
-            data.get('price_usd', 0),  # Price in USD (přesunuto dopředu)
+            rank,  # Rank
+            data.get('price_usd', 0),  # Price in USD
             value,  # Position Value USD
             value_pct,  # % of Portfolio
             weight_pct,  # Weight %
-            data.get('qty', 0),  # Quantity (přesunuto dozadu)
-            data.get('price_btc', 0),  # Price in BTC (přesunuto dozadu)
+            data.get('qty', 0),  # Quantity
+            data.get('price_btc', 0),  # Price in BTC
         ]
         table_data.append(row)
     
@@ -165,19 +153,19 @@ def print_alt_portfolio_table(alt_data, weights, values, title):
     headers = ["Symbol", "Rank", "Price USD", "Value USD", "% of Port", 
                "Weight %", "Quantity", "Price BTC"]
     
-    # Zjednodušíme formátování
+    # Simplified formatting
     print(tabulate(table_data, headers=headers, tablefmt="grid", 
                   floatfmt=[".2f", ".0f", ".2f", ".2f", ".2f", ".2f", ".4f", ".8f"],
                   numalign="right"))
 
 
 def backtest_rank_altbtc_short(df: pd.DataFrame,
-                               btc_w: float = BTC_W,
-                               alt_w: float = ALT_W,
-                               top_n: int = TOP_N,
-                               excluded: list = None,
-                               start_cap: float = START_CAP,
-                               detailed_output: bool = True) -> tuple[pd.DataFrame, dict, pd.DataFrame]:
+                              btc_w: float = BTC_W,
+                              alt_w: float = ALT_W,
+                              top_n: int = TOP_N,
+                              excluded: list = None,
+                              start_cap: float = START_CAP,
+                              detailed_output: bool = True) -> tuple[pd.DataFrame, dict, pd.DataFrame]:
     """
     Backtest the BTC long vs ALT short strategy.
     
@@ -197,370 +185,228 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         excluded = EXCLUDED
         
     weeks = sorted(df["rebalance_ts"].unique())
+    if len(weeks) < 2:
+        print("Not enough weeks for backtest")
+        return pd.DataFrame(), {}, pd.DataFrame()
+        
     equity = start_cap
 
-    btc_qty = 0.0
-    alt_qty = {}  # Symbol -> quantity
-    alt_weights = {}  # Symbol -> weight
-    alt_values = {}  # Symbol -> USD value
-    prev_alt_data = {}  # Symbol -> dict with price data for previous week
+    # Position tracking
+    btc_qty = 0.0                  # BTC position in coins
+    alt_coin_quantities = {}       # Symbol -> actual coin quantities (negative for shorts)
+    alt_notional_values = {}       # Symbol -> notional USD size of position
+    alt_weights = {}               # Symbol -> target weight within ALT basket
+    alt_values = {}                # Symbol -> absolute USD value
     
+    # Performance tracking
     rows = []
-    detailed_positions = []  # To store detailed position data for each week
+    detailed_positions = []
     cum_btc_pnl = cum_alt_pnl = 0.0
-    total_alt_pnl_btc = 0.0
-
-    print_header(f"BACKTEST: {btc_w*100:.0f}% BTC + {alt_w*100:.0f}% ALT Short (Top {top_n})")
+    
+    print(f"\n========== BACKTEST: {btc_w*100:.0f}% BTC + {alt_w*100:.0f}% ALT Short (Top {top_n}) ==========")
     print(f"Date Range: {pd.Timestamp(weeks[0]).date()} to {pd.Timestamp(weeks[-1]).date()}")
     print(f"Excluded Tokens: {', '.join(sorted(excluded))}")
     print(f"Initial Capital: ${start_cap:,.2f} USD")
 
+    # ===== INITIALIZATION =====
+    # Set up initial positions for week 0 to 1
+    print("\n\n")
+    print("┏" + "━" * 80 + "┓")
+    print(f"┃{'INITIAL PORTFOLIO SETUP':^80}┃")
+    print("┗" + "━" * 80 + "┛")
+    
+    # Get data frames for first week (t0) and second week (t1)
+    t0, t1 = weeks[0], weeks[1]
+    w0 = df[df.rebalance_ts == t0].set_index('sym')
+    
+    # Check if we have BTC price for the first week
+    try:
+        btc_price0 = w0.loc["BTC", "price_usd"]
+        if pd.isna(btc_price0) or btc_price0 == 0:
+            raise ValueError("BTC price is NaN or zero")
+    except Exception as e:
+        print(f"Error getting initial BTC price: {e}")
+        print("Cannot initialize positions without BTC price.")
+        return pd.DataFrame(), {}, pd.DataFrame()
+    
+    # 1. Calculate initial BTC position
+    btc_qty = (btc_w * equity) / btc_price0
+    btc_value = btc_qty * btc_price0
+    
+    print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
+    print(f"│                         INITIAL BTC LONG POSITION                            │")
+    print("├─────────────────────────────────────────────────────────────────────────────┤")
+    print(f"│ SETUP FOR WEEK 1 ({pd.Timestamp(t0).strftime('%Y-%m-%d')}):                                         │")
+    print(f"│   BTC Price:            ${btc_price0:15,.2f} USD                                │")
+    print(f"│   BTC Quantity:         {btc_qty:15.6f} BTC   (Weight: {btc_w*100:.1f}%)           │")
+    print(f"│   BTC Position Value:   ${btc_value:15,.2f} USD                                │")
+    print("└─────────────────────────────────────────────────────────────────────────────┘")
+    
+    # Store BTC position details
+    if detailed_output:
+        detailed_positions.append({
+            "Date": pd.Timestamp(t0),
+            "Symbol": "BTC",
+            "Type": "LONG",
+            "Weight": btc_w,
+            "Quantity": btc_qty,
+            "Price_USD": btc_price0,
+            "Value_USD": btc_value,
+            "PnL_USD": 0.0
+        })
+    
+    # 2. Calculate initial ALT short positions
+    # Target value for all short positions combined
+    alt_notional_usd_target = alt_w * equity
+    
+    # Apply excluded symbols filter 
+    filtered_w0 = w0[~w0.index.isin(excluded)]
+    if "BTC" in filtered_w0.index:
+        print(f"WARNING: BTC found in filtered dataframe, removing it")
+        filtered_w0 = filtered_w0.drop("BTC", errors="ignore")
+        
+    # Select top_n altcoins by rank
+    alts_df_t0 = filtered_w0.nsmallest(top_n, "rank") if not filtered_w0.empty else filtered_w0
+    
+    print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
+    print(f"│                         INITIAL ALT SHORT POSITIONS                          │")
+    print("├─────────────────────────────────────────────────────────────────────────────┤")
+    print(f"│ SETUP FOR WEEK 1 ({pd.Timestamp(t0).strftime('%Y-%m-%d')}):                                         │")
+    print(f"│   Target Weight:        {alt_w*100:.1f}% of portfolio                              │")
+    print(f"│   Target Value:         ${alt_notional_usd_target:15,.2f} USD                                │")
+    print(f"│   Number of ALTs:       {top_n:15d}                                         │")
+    print("└─────────────────────────────────────────────────────────────────────────────┘")
+    
+    if not alts_df_t0.empty:
+        # Calculate weights based on market cap
+        tot_mcap = alts_df_t0["mcap_btc"].sum()
+        
+        if tot_mcap > 0 and not pd.isna(tot_mcap):
+            alt_data = {}  # For tabular display
+            
+            for sym, r in alts_df_t0.iterrows():
+                if pd.isna(r.price_usd) or r.price_usd == 0:
+                    continue
+                    
+                # Calculate weight proportional to market cap
+                weight = r.mcap_btc / tot_mcap
+                alt_weights[sym] = weight
+                
+                # Calculate target USD value for this altcoin
+                target_usd_value = alt_notional_usd_target * weight
+                
+                # Calculate negative quantity (short position)
+                # IMPORTANT: We use t0 prices to calculate quantities for week 1
+                coin_qty = -target_usd_value / r.price_usd
+                alt_coin_quantities[sym] = coin_qty
+                
+                # Store notional USD value (negative for shorts)
+                alt_notional_values[sym] = -target_usd_value
+                
+                # Store position USD value (absolute value)
+                alt_values[sym] = abs(alt_notional_values[sym])
+                
+                # Store data for display
+                alt_data[sym] = {
+                    'rank': r.rank,
+                    'qty': coin_qty,  # Negative quantity for short
+                    'price_usd': r.price_usd,
+                    'price_btc': r.price_btc,
+                    'mcap_btc': r.mcap_btc,
+                    'target_usd': target_usd_value,
+                    'actual_usd': alt_values[sym],
+                    'weight': weight
+                }
+                
+                # Store detailed position data
+                if detailed_output:
+                    detailed_positions.append({
+                        "Date": pd.Timestamp(t0),
+                        "Symbol": sym,
+                        "Type": "SHORT",
+                        "Weight": weight,
+                        "Quantity": coin_qty,
+                        "Price_USD": r.price_usd,
+                        "Value_USD": abs(alt_notional_values[sym]),
+                        "PnL_USD": 0.0
+                    })
+            
+            # Print the ALT positions table
+            print_alt_portfolio_table(alt_data, alt_weights, alt_values, "ALT SHORT BASKET COMPOSITION")
+        else:
+            print("No valid market cap data for ALTs. Cannot initialize short positions.")
+    else:
+        print("No ALTs available after filtering. No short positions initialized.")
+
+    # ===== MAIN BACKTEST LOOP =====
     for i in range(len(weeks) - 1):
-        # ===== START TÝDEN i+1 =====
+        # Get data for current week (t0) and next week (t1)
         t0, t1 = weeks[i], weeks[i + 1]
         w0 = df[df.rebalance_ts == t0].set_index('sym')
         w1 = df[df.rebalance_ts == t1].set_index('sym')
         
-        # Výrazná hlavička pro začátek týdne
-        week_header = f"TÝDEN {i+1}: {pd.Timestamp(t0).strftime('%d.%m.%Y')} → {pd.Timestamp(t1).strftime('%d.%m.%Y')}"
+        # Weekly header
+        week_header = f"WEEK {i+1}: {pd.Timestamp(t0).strftime('%Y-%m-%d')} → {pd.Timestamp(t1).strftime('%Y-%m-%d')}"
         print("\n\n")
-        print("┏" + "━" * 102 + "┓")
-        print(f"┃{week_header:^102}┃")
-        print("┗" + "━" * 102 + "┛")
+        print("┏" + "━" * 80 + "┓")
+        print(f"┃{week_header:^80}┃")
+        print("┗" + "━" * 80 + "┛")
         print("\n")
 
-        # BTC prices
+        # Get BTC prices for this period
         try:
-            btc_price0 = w0["btc_price_usd"].mean()
-            btc_price1 = w1["btc_price_usd"].mean()
+            btc_price0 = w0.loc["BTC", "price_usd"]
+            btc_price1 = w1.loc["BTC", "price_usd"]
             if pd.isna(btc_price0) or pd.isna(btc_price1) or btc_price0 == 0:
                 raise ValueError("BTC price is NaN or zero")
         except Exception as e:
             print(f"Error getting BTC price: {e}")
             if i == 0:
-                print("Cannot initialize positions without BTC price.")
+                print("Cannot analyze first week without BTC price.")
                 return pd.DataFrame(), {}, pd.DataFrame()
             else:
-                print("Holding previous positions due to missing BTC price.")
-                if rows:
-                    last_row = rows[-1]
-                    rows.append({**last_row, 'Date': pd.Timestamp(t1), 'BTC_Price_USD': None})
+                print("Using previous BTC price due to missing data.")
                 continue
 
-        # Update alt price data for the current week
-        current_alt_data = {}
-        for sym in w1.index:
-            if sym in excluded:
-                continue
-                
-            current_alt_data[sym] = {
-                'rank': w1.at[sym, 'rank'],
-                'price_btc': w1.at[sym, 'price_btc'],
-                'price_usd': w1.at[sym, 'price_usd'],
-                'mcap_btc': w1.at[sym, 'mcap_btc'],
-                'mcap_usd': w1.at[sym, 'market_cap_usd']
-            }
-
-        # Načtení počátečních pozic a výpočet výkonnosti za týden
-        if i == 0:
-            # TÝDEN 1 - ZAČÁTEK
-            print("┌───────────────────────────────────────────────────────────────────────────────────────┐")
-            print(f"│                              📋 POZICE - TÝDEN {i+1}                                   │")
-            print("└───────────────────────────────────────────────────────────────────────────────────────┘")
-            print("\n")
-            
-            # První týden - musíme nastavit počáteční pozice
-            # Initialize BTC position
-            btc_qty = (btc_w * equity) / btc_price0
-            btc_value = btc_qty * btc_price0
-            
-            print("┌───────────────────────────────────────────────────────────────────────────────────────┐")
-            print(f"│                             🔵 BTC POZICE - TÝDEN {i+1}                                │")
-            print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-            print(f"│ VSTUPNÍ CENY A POZICE ({pd.Timestamp(t0).strftime('%d.%m.%Y')}):                                                │")
-            print(f"│   BTC Cena:             ${btc_price0:15,.2f} USD                                        │")
-            print(f"│   BTC Množství:         {btc_qty:15.6f} BTC   (Alokace: {btc_w*100:.1f}% z equity)        │")
-            print(f"│   BTC Hodnota:          ${btc_value:15,.2f} USD                                        │")
-            print("└───────────────────────────────────────────────────────────────────────────────────────┘")
-            
-            # Store BTC position details
-            if detailed_output:
-                detailed_positions.append({
-                    "Date": pd.Timestamp(t0),
-                    "Symbol": "BTC",
-                    "Type": "LONG",
-                    "Weight": btc_w,
-                    "Quantity": btc_qty,
-                    "Price_BTC": 1.0,
-                    "Price_USD": btc_price0,
-                    "Value_USD": btc_value,
-                    "PnL_BTC": 0.0,
-                    "PnL_USD": 0.0
-                })
-
-            # Initialize ALT short basket
-            alt_notional_usd_target = alt_w * equity
-            # Aplikujeme filtr pro excluded symboly
-            filtered_w0 = w0[~w0.index.isin(excluded)]
-            # Výslovně ověříme, že BTC není v datasetu
-            if "BTC" in filtered_w0.index:
-                print(f"WARNING: BTC found in filtered dataframe, removing it")
-                filtered_w0 = filtered_w0.drop("BTC", errors="ignore")
-            # Nyní vybereme top_n podle ranku
-            alts_df_t0 = filtered_w0.nsmallest(top_n, "rank") if not filtered_w0.empty else filtered_w0
-            actual_alt_usd_value_total = 0.0
-            
-            print("\n")
-            print("┌───────────────────────────────────────────────────────────────────────────────────────┐")
-            print(f"│                            🔴 ALT POZICE - TÝDEN {i+1}                                │")
-            print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-            print(f"│ VSTUPNÍ CENY A POZICE ({pd.Timestamp(t0).strftime('%d.%m.%Y')}):                                                │")
-            print(f"│   Cílová alokace:       {alt_w*100:.1f}% portfolia                                        │")
-            print(f"│   Cílová hodnota:       ${alt_notional_usd_target:15,.2f} USD                                        │")
-            print(f"│   Počet ALT mincí:      {top_n:15d}                                                │")
-            print("└───────────────────────────────────────────────────────────────────────────────────────┘")
-            
-            if not alts_df_t0.empty:
-                tot_mcap = alts_df_t0["mcap_btc"].sum()
-                
-                if tot_mcap > 0 and not pd.isna(tot_mcap):
-                    alt_data = {}  # For tabular display
-                    
-                    for sym, r in alts_df_t0.iterrows():
-                        if pd.isna(r.price_btc) or r.price_btc == 0 or pd.isna(r.mcap_btc):
-                            continue
-                            
-                        weight = r.mcap_btc / tot_mcap
-                        alt_weights[sym] = weight
-                        
-                        alt_usd_target_sym = alt_notional_usd_target * weight
-                        qty = -(alt_usd_target_sym / (r.price_btc * btc_price0))
-                        alt_qty[sym] = qty
-                        
-                        actual_usd_value_sym = abs(qty * r.price_btc * btc_price0)
-                        alt_values[sym] = actual_usd_value_sym
-                        actual_alt_usd_value_total += actual_usd_value_sym
-                        
-                        # Store data for display
-                        alt_data[sym] = {
-                            'rank': r.rank,
-                            'qty': qty,
-                            'price_btc': r.price_btc,
-                            'price_usd': r.price_usd,
-                            'mcap_btc': r.mcap_btc,
-                            'target_usd': alt_usd_target_sym,
-                            'actual_usd': actual_usd_value_sym,
-                            'weight': weight
-                        }
-                        
-                        # Store for price comparison next week
-                        prev_alt_data[sym] = {
-                            'price_btc': r.price_btc, 
-                            'price_usd': r.price_usd
-                        }
-                        
-                        # Store detailed position data
-                        if detailed_output:
-                            detailed_positions.append({
-                                "Date": pd.Timestamp(t0),
-                                "Symbol": sym,
-                                "Type": "SHORT",
-                                "Weight": weight,
-                                "Quantity": qty,
-                                "Price_BTC": r.price_btc,
-                                "Price_USD": r.price_usd,
-                                "Value_USD": actual_usd_value_sym,
-                                "PnL_BTC": 0.0,
-                                "PnL_USD": 0.0
-                            })
-                    
-                    # Print the ALT positions table
-                    print_alt_portfolio_table(alt_data, alt_weights, alt_values, "🔴 ALT SHORT BASKET COMPOSITION")
-                    
-                else:
-                    print("\nWarning: Total mcap_btc zero or NaN. No ALT shorts initialized.")
-                    alt_qty = {}
-            
-            # Portfolio summary pro týden 1
-            btc_pct = btc_value/equity*100
-            alt_pct = actual_alt_usd_value_total/equity*100
-            cash = equity - btc_value - actual_alt_usd_value_total
-            cash_pct = cash/equity*100
-            
-            # Budeme počítat P/L ke konci týdne 1
-            btc_end_value = btc_qty * btc_price1  # Hodnota na konci týdne
-            btc_pnl_usd = (btc_price1 - btc_price0) * btc_qty
-            btc_return_pct = ((btc_price1 - btc_price0) / btc_price0) * 100
-            
-            # Výpočet ALT P/L - podobně jako u ostatních týdnů
-            weekly_alt_pnl_btc = 0.0
-            weekly_alt_pnl_usd = 0.0
-            current_alt_values = {}
-            
-            # Projdeme ALT pozice a spočítáme P/L
-            if alt_qty:
-                for sym, qty in alt_qty.items():
-                    if sym in w0.index and sym in w1.index:
-                        p0_btc = w0.at[sym, "price_btc"]
-                        p1_btc = w1.at[sym, "price_btc"]
-                        p0_usd = w0.at[sym, "price_usd"]
-                        p1_usd = w1.at[sym, "price_usd"]
-                        
-                        # Výpočet hodnoty pozice a P/L
-                        pos_value_usd = abs(qty * p1_btc * btc_price1)
-                        current_alt_values[sym] = pos_value_usd
-                        
-                        if not pd.isna(p0_btc) and not pd.isna(p1_btc):
-                            # Výpočet P/L
-                            pnl_btc = (p1_btc - p0_btc) * qty
-                            pnl_usd = pnl_btc * btc_price1
-                            weekly_alt_pnl_btc += pnl_btc
-                            weekly_alt_pnl_usd += pnl_usd
-            
-            # Celkový P/L a aktualizace equity
-            total_weekly_pnl = btc_pnl_usd + weekly_alt_pnl_usd
-            weekly_return_pct = (total_weekly_pnl / equity) * 100
-            
-            # Aktualizovat celkové součty
-            cum_btc_pnl += btc_pnl_usd
-            cum_alt_pnl += weekly_alt_pnl_usd
-            total_alt_pnl_btc += weekly_alt_pnl_btc
-            equity += total_weekly_pnl
-            
-            # Zobrazíme shrnutí
-            print("\n\n")
-            print("┌───────────────────────────────────────────────────────────────────────────────────────┐")
-            print(f"│                       📊 VÝSLEDKY ZA TÝDEN {i+1} - KONEC TÝDNE                         │")
-            print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-            print(f"│ 1️⃣ VÝKON PORTFOLIA ({pd.Timestamp(t0).strftime('%d.%m.%Y')} - {pd.Timestamp(t1).strftime('%d.%m.%Y')}):                                 │")
-            print(f"│   🔵 BTC Long P/L:        ${btc_pnl_usd:+15,.2f} USD                                        │")
-            print(f"│   🔴 ALT Short P/L:       ${weekly_alt_pnl_usd:+15,.2f} USD                                        │")
-            print(f"│   ➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖                          │")
-            print(f"│   📈 CELKOVÝ P/L:         ${total_weekly_pnl:+15,.2f} USD     (změna: {weekly_return_pct:+7.2f}%)            │")
-            print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-            print(f"│ 2️⃣ AKTUALIZOVANÝ STAV PORTFOLIA (PO ZAPOČTENÍ P/L):                                    │")
-            print(f"│   📊 Kumulativní P/L:     ${cum_btc_pnl + cum_alt_pnl:+15,.2f} USD                                        │")
-            print(f"│   💰 Nové celkové equity: ${equity:15,.2f} USD                                        │")
-            print(f"│   🔵 BTC hodnota:         ${btc_end_value:15,.2f} USD     ({btc_end_value/equity*100:6.2f}% z equity)              │")
-            print(f"│   🔴 ALT hodnota:         ${sum(current_alt_values.values()):15,.2f} USD     ({sum(current_alt_values.values())/equity*100:6.2f}% z equity)              │")
-            print("└───────────────────────────────────────────────────────────────────────────────────────┘")
-            
-            # Rebalancování pro týden 2
-            print("\n")
-            print("┌───────────────────────────────────────────────────────────────────────────────────────┐")
-            print(f"│                  ⚖️  REBALANCOVÁNÍ PRO ZAČÁTEK TÝDNE {i+2}                            │")
-            print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-            print(f"│ Cíl rebalancování: Vrátit poměr BTC/ALT na {btc_w*100:.0f}/{alt_w*100:.0f} pro maximalizaci strategie            │")
-            print("└───────────────────────────────────────────────────────────────────────────────────────┘")
-            print("\n")
-            
-            # Rebalance BTC position - zde přenastavujeme pozice pro PŘÍŠTÍ týden
-            current_btc_qty = btc_qty  # Aktuální množství BTC před rebalancováním
-            current_btc_value = current_btc_qty * btc_price1  # Aktuální hodnota BTC
-            
-            # Pro lepší porozumění zobrazíme i cílový ekvity split 50/50
-            target_btc_value = equity * btc_w
-            target_alt_value = equity * alt_w
-            
-            # BTC rebalance information
-            print("┌───────────────────────────────────────────────────────────────────────────────────────┐")
-            print(f"│                         🔵 BTC REBALANCOVÁNÍ - PŘÍŠTÍ TÝDEN                           │")
-            print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-            print(f"│ 1️⃣ AKTUÁLNÍ STAV PŘED REBALANCOVÁNÍM ({pd.Timestamp(t1).strftime('%d.%m.%Y')}):                                │")
-            print(f"│   • Nové celkové equity: ${equity:15,.2f} USD (včetně všech zisků/ztrát)          │")
-            print(f"│   • BTC hodnota:         ${current_btc_value:15,.2f} USD = {current_btc_value/equity*100:6.2f}% z equity           │")
-            print(f"│   • ALT hodnota:         ${sum(current_alt_values.values()):15,.2f} USD = {sum(current_alt_values.values())/equity*100:6.2f}% z equity           │")
-            print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-            print(f"│ 2️⃣ CÍLOVÝ STAV PO REBALANCOVÁNÍ:                                                       │")
-            print(f"│   • Cíl BTC leg:         ${target_btc_value:15,.2f} USD = přesně {btc_w*100:3.0f}% z equity          │")
-            print(f"│   • Cíl ALT leg:         ${target_alt_value:15,.2f} USD = přesně {alt_w*100:3.0f}% z equity          │")
-            print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-            
-            # Provedeme rebalancování - určíme nové množství BTC pro PŘÍŠTÍ týden
-            new_btc_qty = (btc_w * equity) / btc_price1
-            new_btc_value = new_btc_qty * btc_price1
-            
-            # Vypočítáme a zobrazíme procentuální změny
-            qty_change = new_btc_qty - current_btc_qty
-            qty_change_pct = (qty_change / current_btc_qty) * 100 if current_btc_qty != 0 else 0
-            value_change = new_btc_value - current_btc_value
-            
-            print(f"│ 3️⃣ VÝPOČET NOVÉHO MNOŽSTVÍ BTC:                                                         │")
-            print(f"│   • Vzorec:              (Cílový % × Equity) ÷ Aktuální cena BTC                     │")
-            print(f"│   • Výpočet:             ({btc_w:.2f} × ${equity:,.2f}) ÷ ${btc_price1:,.2f} = {new_btc_qty:.6f} BTC           │")
-            print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-            print(f"│ 4️⃣ REBALANCOVANÁ BTC POZICE PRO TÝDEN {i+2}:                                             │")
-            print(f"│   • Stávající množství:  {current_btc_qty:15.6f} BTC                                          │")
-            print(f"│   • Nové množství:       {new_btc_qty:15.6f} BTC   (změna: {qty_change:+.6f} BTC)            │")
-            print(f"│   • Stávající hodnota:   ${current_btc_value:15,.2f} USD = {current_btc_value/equity*100:6.2f}% z equity           │")
-            print(f"│   • Nová hodnota:        ${new_btc_value:15,.2f} USD = {new_btc_value/equity*100:6.2f}% z equity           │")
-            print(f"│                                                                                       │")
-            print(f"│   Potřebná změna pozice: {qty_change:+15.6f} BTC    ({qty_change_pct:+7.2f}%)                   │")
-            print("└───────────────────────────────────────────────────────────────────────────────────────┘")
-            
-            # Rebalancujeme i ALT short basket
-            # Nastavíme nové množství BTC pro příští týden 
-            btc_qty = new_btc_qty
-            
-            rows.append({
-                "Date": pd.Timestamp(t1),
-                "Equity_USD": equity,
-                "BTC_Price_USD": btc_price1,
-                "BtcQty": btc_qty,
-                "BtcHold_USD": btc_qty * btc_price1,
-                "AltShortTarget_USD": target_alt_value,
-                "AltShortActual_USD": sum(current_alt_values.values()),
-                "AltShortCount": len(alt_qty),
-                "Weekly_BTC_PNL_USD": btc_pnl_usd,
-                "Weekly_ALT_PNL_USD": weekly_alt_pnl_usd,
-                "Cum_BTC_PNL_USD": cum_btc_pnl,
-                "Cum_ALT_PNL_USD": cum_alt_pnl,
-                "Cum_ALT_PNL_BTC": total_alt_pnl_btc,
-                "Weekly_Return_Pct": weekly_return_pct
-            })
-            continue
+        # ===== 1. DISPLAY PORTFOLIO AT START OF WEEK =====
+        # Show positions that were established at the end of previous week
+        print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
+        print(f"│                    PORTFOLIO POSITIONS - WEEK {i+1} START                     │")
+        print("├─────────────────────────────────────────────────────────────────────────────┤")
+        print(f"│ DATE:                  {pd.Timestamp(t0).strftime('%Y-%m-%d')}                                           │")
+        print(f"│                                                                             │")
+        print(f"│ BTC position:          {btc_qty:15.6f} BTC @ ${btc_price0:,.2f} = ${btc_qty * btc_price0:,.2f}     │")
         
-        # ===== TÝDEN 2+ - Přehled pozic po rebalancování z předchozího týdne =====
-        print("\n\n")
-        print("┌───────────────────────────────────────────────────────────────────────────────────────┐")
-        print(f"│                          📋 PŘEHLED POZIC NA ZAČÁTKU TÝDNE {i+1}                      │")
-        print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-        print(f"│ DATUM:                   {pd.Timestamp(t0).strftime('%d.%m.%Y')}                                                  │")
-        print(f"│                                                                                       │")
-        print(f"│ 🔵 BTC pozice:           {btc_qty:15.6f} BTC @ ${btc_price0:,.2f} = ${btc_qty * btc_price0:,.2f}       │")
-        print(f"│ 🔴 ALT pozice:           {len(alt_qty):15d} mincí, celková hodnota: ${sum(qty * w0.at[sym, 'price_usd'] for sym, qty in alt_qty.items()) if alt_qty else 0:,.2f}  │")
-        print(f"│ 💰 Celkové equity:       ${equity:15,.2f} USD                                        │")
-        print("└───────────────────────────────────────────────────────────────────────────────────────┘")
-        print("\n")
-
-        # Calculate BTC position P/L - mnoůžství BTC se během týdne nemění
-        # P/L je založeno pouze na změně ceny BTC
-        btc_pnl_usd = (btc_price1 - btc_price0) * btc_qty
+        alt_total_value = sum(abs(v) for v in alt_notional_values.values())
+        print(f"│ ALT positions:         {len(alt_coin_quantities):15d} coins, total value: ${alt_total_value:,.2f}      │")
+        print(f"│ Total equity:          ${equity:15,.2f} USD                                  │")
+        print("└─────────────────────────────────────────────────────────────────────────────┘")
+        
+        # ===== 2. CALCULATE P&L FOR THIS WEEK =====
+        
+        # 2.1 Calculate BTC P&L
+        btc_pnl_usd = btc_qty * (btc_price1 - btc_price0)
         btc_return_pct = ((btc_price1 - btc_price0) / btc_price0) * 100
-        btc_start_value = btc_qty * btc_price0  # Hodnota na začátku týdne
-        btc_end_value = btc_qty * btc_price1    # Hodnota na konci týdne před rebalancováním
         
-        print("┌───────────────────────────────────────────────────────────────────────────────────────┐")
-        print(f"│                           🔵 BTC LONG POZICE - VÝKONNOST                              │")
-        print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-        print(f"│ ZAČÁTEK TÝDNE {i+1} ({pd.Timestamp(t0).strftime('%d.%m.%Y')}):                                                           │")
-        print(f"│   BTC Cena:             ${btc_price0:15,.2f} USD                                        │")
-        print(f"│   BTC Množství:         {btc_qty:15.6f} BTC                                          │")
-        print(f"│   Hodnota pozice:       ${btc_start_value:15,.2f} USD                                        │")
-        print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-        print(f"│ KONEC TÝDNE {i+1} ({pd.Timestamp(t1).strftime('%d.%m.%Y')}):                                                             │")
-        print(f"│   BTC Cena:             ${btc_price1:15,.2f} USD                                        │")
-        print(f"│   Cenová změna:                               {btc_return_pct:+7.2f}%                           │")
-        print(f"│   BTC Množství:         {btc_qty:15.6f} BTC     (neměnné během týdne)              │")
-        print(f"│   Hodnota pozice:       ${btc_end_value:15,.2f} USD                                        │")
-        print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-        print(f"│ 💰 VÝSLEDEK BTC POZICE:                                                                 │")
-        print(f"│   Týdenní P/L:          ${btc_pnl_usd:+15,.2f} USD                                        │")
-        print(f"│                                                                                       │")
-        print(f"│   VÝPOČET: {btc_qty:.6f} BTC × (${btc_price1:,.2f} - ${btc_price0:,.2f}) = ${btc_pnl_usd:+,.2f}                         │")
-        print("└───────────────────────────────────────────────────────────────────────────────────────┘")
+        print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
+        print(f"│                       BTC LONG POSITION - PERFORMANCE                        │")
+        print("├─────────────────────────────────────────────────────────────────────────────┤")
+        print(f"│ WEEK {i+1} START ({pd.Timestamp(t0).strftime('%Y-%m-%d')}):                                                │")
+        print(f"│   BTC Price:            ${btc_price0:15,.2f} USD                                │")
+        print(f"│   BTC Quantity:         {btc_qty:15.6f} BTC                                  │")
+        print(f"│   Position Value:       ${btc_qty * btc_price0:15,.2f} USD                                │")
+        print("├─────────────────────────────────────────────────────────────────────────────┤")
+        print(f"│ WEEK {i+1} END ({pd.Timestamp(t1).strftime('%Y-%m-%d')}):                                                  │")
+        print(f"│   BTC Price:            ${btc_price1:15,.2f} USD                                │")
+        print(f"│   Price Change:                               {btc_return_pct:+7.2f}%                   │")
+        print(f"│   BTC Quantity:         {btc_qty:15.6f} BTC     (unchanged during week)      │")
+        print(f"│   Position Value:       ${btc_qty * btc_price1:15,.2f} USD                                │")
+        print("├─────────────────────────────────────────────────────────────────────────────┤")
+        print(f"│ BTC POSITION RESULT:                                                         │")
+        print(f"│   Weekly P&L:           ${btc_pnl_usd:+15,.2f} USD                                │")
+        print("└─────────────────────────────────────────────────────────────────────────────┘")
         
-        # Store BTC position details
+        # Store BTC position details at end of week
         if detailed_output:
             detailed_positions.append({
                 "Date": pd.Timestamp(t1),
@@ -568,101 +414,76 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                 "Type": "LONG",
                 "Weight": btc_w,
                 "Quantity": btc_qty,
-                "Price_BTC": 1.0,
                 "Price_USD": btc_price1,
-                "Value_USD": btc_value,
-                "PnL_BTC": 0.0,  # BTC doesn't have BTC-denominated P/L
+                "Value_USD": btc_qty * btc_price1,
                 "PnL_USD": btc_pnl_usd
             })
-
-        # Calculate ALT positions P/L
-        print("\n")
-        print("┌───────────────────────────────────────────────────────────────────────────────────────┐")
-        print(f"│                          🔴 ALT SHORT POZICE - VÝKONNOST                              │")
-        print("├───────────────────────────────────────────────────────────────────────────────────────┤")
         
-        if not alt_qty:
+        # 2.2 Calculate ALT P&L - for shorts using fixed coin quantities
+        print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
+        print(f"│                      ALT SHORT POSITIONS - PERFORMANCE                       │")
+        print("└─────────────────────────────────────────────────────────────────────────────┘")
+        
+        if not alt_coin_quantities:
             print("No ALT positions to track.")
-            weekly_alt_pnl_btc = weekly_alt_pnl_usd = 0
+            weekly_alt_pnl_usd = 0
+            current_alt_values = {}
         else:
             # Prepare data for table display
             alt_pnl_data = []
-            weekly_alt_pnl_btc = 0.0
             weekly_alt_pnl_usd = 0.0
-            current_alt_weights = {}
             current_alt_values = {}
             
-            # Calculate total market cap for weight calculation
-            total_mcap_btc = sum(current_alt_data[sym]['mcap_btc'] for sym in alt_qty.keys() 
-                              if sym in current_alt_data)
-            
-            for sym, qty_held in alt_qty.items():
-                row_data = []
-                
+            for sym, coin_qty in alt_coin_quantities.items():
                 if sym in w0.index and sym in w1.index:
-                    p0_btc = w0.at[sym, "price_btc"]
-                    p1_btc = w1.at[sym, "price_btc"]
-                    p0_usd = w0.at[sym, "price_usd"]
-                    p1_usd = w1.at[sym, "price_usd"]
-                    mcap_btc = w1.at[sym, "mcap_btc"] 
+                    # Get prices for this period
+                    start_price = w0.at[sym, "price_usd"]
+                    end_price = w1.at[sym, "price_usd"]
                     rank = w1.at[sym, "rank"]
                     
-                    # Calculate weight
-                    weight = mcap_btc / total_mcap_btc if total_mcap_btc else 0
-                    current_alt_weights[sym] = weight
+                    # For shorts: profit when price goes down, loss when price goes up
                     
-                    # Calculate position value
-                    pos_value_usd = abs(qty_held * p1_btc * btc_price1)
-                    current_alt_values[sym] = pos_value_usd
+                    # P&L calculation for this period
+                    # For a short position (coin_qty is negative): profit when price decreases
+                    pnl_usd = (start_price - end_price) * abs(coin_qty)
+                    weekly_alt_pnl_usd += pnl_usd
                     
-                    if not pd.isna(p0_btc) and not pd.isna(p1_btc):
-                        # Calculate P/L in BTC and USD
-                        pnl_btc = (p1_btc - p0_btc) * qty_held
-                        pnl_usd = pnl_btc * btc_price1
-                        weekly_alt_pnl_btc += pnl_btc
-                        weekly_alt_pnl_usd += pnl_usd
-                        
-                        # Calculate percentage changes
-                        price_change_pct = ((p1_btc - p0_btc) / p0_btc) * 100
-                        price_change_usd_pct = ((p1_usd - p0_usd) / p0_usd) * 100
-                        
-                        # Add to data for table display
-                        row_data = [
-                            sym,                    # Symbol
-                            rank,                   # Rank
-                            p0_usd,                 # Start Price (USD)
-                            p1_usd,                 # End Price (USD)
-                            price_change_usd_pct,   # Price Change %
-                            qty_held,               # Quantity (Negative for shorts)
-                            pos_value_usd,          # Position Value (USD)
-                            pos_value_usd / sum(current_alt_values.values()) * 100 if sum(current_alt_values.values()) > 0 else 0,  # % of Basket
-                            pnl_usd,                # P/L (USD)
-                            weight * 100            # Target Weight %
-                        ]
-                        
-                        # Store detailed position data
-                        if detailed_output:
-                            detailed_positions.append({
-                                "Date": pd.Timestamp(t1),
-                                "Symbol": sym,
-                                "Type": "SHORT",
-                                "Weight": weight,
-                                "Price_USD": p1_usd,
-                                "Value_USD": pos_value_usd,
-                                "PnL_USD": pnl_usd,
-                                "Quantity": qty_held,
-                                "Price_BTC": p1_btc,
-                                "PnL_BTC": pnl_btc
-                            })
-                    else:
-                        row_data = [sym, rank, "N/A", "N/A", "N/A", qty_held, "N/A", "N/A", "N/A", "N/A"]
-                
-                if row_data:
-                    alt_pnl_data.append(row_data)
+                    # Update position value at current prices (mark to market)
+                    market_value = abs(coin_qty * end_price)
+                    current_alt_values[sym] = market_value
+                    
+                    # Calculate percentage change in price
+                    price_change_pct = ((end_price - start_price) / start_price) * 100
+                    
+                    # Add to data for table display
+                    alt_pnl_data.append([
+                        sym,                    # Symbol
+                        rank,                   # Rank
+                        start_price,            # Start Price
+                        end_price,              # End Price
+                        price_change_pct,       # Price Change %
+                        coin_qty,               # Equivalent Coin Quantity
+                        market_value,           # Position Value (USD)
+                        market_value / sum(current_alt_values.values()) * 100 if sum(current_alt_values.values()) > 0 else 0,  # % of Basket
+                        pnl_usd,                # P&L (USD)
+                        alt_weights.get(sym, 0) * 100  # Target Weight %
+                    ])
+                    
+                    # Store detailed position data at end of week
+                    if detailed_output:
+                        detailed_positions.append({
+                            "Date": pd.Timestamp(t1),
+                            "Symbol": sym,
+                            "Type": "SHORT",
+                            "Weight": alt_weights.get(sym, 0),
+                            "Quantity": coin_qty,
+                            "Price_USD": end_price,
+                            "Value_USD": market_value,
+                            "PnL_USD": pnl_usd
+                        })
             
-            # Sort by position value (descending)
             if alt_pnl_data:
-                # Řadíme podle Position Value (USD) - index 6
+                # Sort by position value (descending)
                 alt_pnl_data.sort(key=lambda x: x[6] if isinstance(x[6], (int, float)) else 0, reverse=True)
                 
                 # Add totals row
@@ -672,250 +493,75 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                     "",  # Quantity
                     total_value,  # Position Value
                     100.0,  # % of Basket
-                    weekly_alt_pnl_usd,  # P/L (USD)
+                    weekly_alt_pnl_usd,  # P&L (USD)
                     100.0  # Target Weight%
                 ])
                 
                 # Print table
                 headers = [
                     "Symbol", "Rank", "Start Price", "End Price", "Change%", 
-                    "Quantity", "Position Value", "% of Basket", "P/L (USD)", "Target Weight%"
+                    "Coins Qty", "Position USD", "% of Basket", "P&L (USD)", "Target Weight%"
                 ]
                 
-                # Zjednodušené formátování - explicitně pro každý sloupec
+                # Explicit formatting for each column
                 formats = [
-                    ".0f",     # Symbol - nepoužívá se
+                    ".0f",     # Symbol 
                     ".0f",     # Rank
                     ".2f",     # Start Price
                     ".2f",     # End Price
                     "+.2f",    # Change%
-                    ".4f",     # Quantity
-                    ".2f",     # Position Value
+                    ".4f",     # Coins Qty
+                    ".2f",     # Position USD
                     ".2f",     # % of Basket
-                    "+.2f",    # P/L (USD)
+                    "+.2f",    # P&L (USD)
                     ".2f"      # Target Weight%
                 ]
                 
-                alt_performance_table = tabulate(alt_pnl_data, headers=headers, tablefmt="grid", 
-                                           floatfmt=formats,
-                                           numalign="right")
-                print(alt_performance_table)
+                print(tabulate(alt_pnl_data, headers=headers, tablefmt="grid", 
+                              floatfmt=formats, numalign="right"))
                 
-                # Přidáme souhrnný řádek po tabulce
-                total_alt_value = sum(current_alt_values.values())
-                
-                print("\n┌───────────────────────────────────────────────────────────────────────────────────────┐")
-                print(f"│ 💰 VÝSLEDEK ALT SHORT POZIC:                                                            │")
-                print(f"│   Počet ALT mincí:      {len(alt_qty):15d}                                             │")
-                print(f"│   Celková hodnota pozic:${total_alt_value:15,.2f} USD                                        │")
-                print(f"│   Týdenní P/L:          ${weekly_alt_pnl_usd:+15,.2f} USD                                        │")
-                print(f"│                                                                                       │")
-                print(f"│   VÝPOČET P/L: suma({weekly_alt_pnl_usd:+,.2f} USD) = součet zisků/ztrát na všech ALT pozicích     │")
-                print("└───────────────────────────────────────────────────────────────────────────────────────┘")
+                # Add summary row after table
+                print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
+                print(f"│ ALT SHORT POSITIONS RESULT:                                                  │")
+                print(f"│   Number of ALTs:       {len(alt_coin_quantities):15d}                                         │")
+                print(f"│   Total Position Value: ${sum(current_alt_values.values()):15,.2f} USD                                │")
+                print(f"│   Weekly P&L:           ${weekly_alt_pnl_usd:+15,.2f} USD                                │")
+                print("└─────────────────────────────────────────────────────────────────────────────┘")
             else:
                 print("No valid ALT positions to display.")
-
-        # Calculate weekly totals
+        
+        # ===== 3. UPDATE PORTFOLIO EQUITY AND SHOW WEEKLY SUMMARY =====
         total_weekly_pnl = btc_pnl_usd + weekly_alt_pnl_usd
         weekly_return_pct = (total_weekly_pnl / equity) * 100
         
-        # Update running totals
+        # Update cumulative P&L and equity
         cum_btc_pnl += btc_pnl_usd
         cum_alt_pnl += weekly_alt_pnl_usd
-        total_alt_pnl_btc += weekly_alt_pnl_btc
         equity += total_weekly_pnl
         
         # Print week summary
         print("\n\n")
-        print("┌───────────────────────────────────────────────────────────────────────────────────────┐")
-        print(f"│                       📊 VÝSLEDKY ZA TÝDEN {i+1} - KONEC TÝDNE                         │")
-        print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-        print(f"│ 1️⃣ VÝKON PORTFOLIA ({pd.Timestamp(t0).strftime('%d.%m.%Y')} - {pd.Timestamp(t1).strftime('%d.%m.%Y')}):                                 │")
-        print(f"│   🔵 BTC Long P/L:        ${btc_pnl_usd:+15,.2f} USD                                        │")
-        print(f"│   🔴 ALT Short P/L:       ${weekly_alt_pnl_usd:+15,.2f} USD                                        │")
-        print(f"│   ➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖                          │")
-        print(f"│   📈 CELKOVÝ P/L:         ${total_weekly_pnl:+15,.2f} USD     (změna: {weekly_return_pct:+7.2f}%)            │")
-        print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-        print(f"│ 2️⃣ AKTUALIZOVANÝ STAV PORTFOLIA (PO ZAPOČTENÍ P/L):                                    │")
-        print(f"│   📊 Kumulativní P/L:     ${cum_btc_pnl + cum_alt_pnl:+15,.2f} USD                                        │")
-        print(f"│   💰 Nové celkové equity: ${equity:15,.2f} USD                                        │")
-        print(f"│   🔵 BTC hodnota:         ${btc_end_value:15,.2f} USD     ({btc_end_value/equity*100:6.2f}% z equity)              │")
-        print(f"│   🔴 ALT hodnota:         ${sum(current_alt_values.values()) if 'current_alt_values' in locals() else 0:15,.2f} USD     ({sum(current_alt_values.values())/equity*100 if 'current_alt_values' in locals() and equity > 0 else 0:6.2f}% z equity)              │")
-        print("└───────────────────────────────────────────────────────────────────────────────────────┘")
+        print("┌─────────────────────────────────────────────────────────────────────────────┐")
+        print(f"│                       WEEK {i+1} RESULTS - END OF WEEK                       │")
+        print("├─────────────────────────────────────────────────────────────────────────────┤")
+        print(f"│ PORTFOLIO PERFORMANCE ({pd.Timestamp(t0).strftime('%Y-%m-%d')} - {pd.Timestamp(t1).strftime('%Y-%m-%d')}):                           │")
+        print(f"│   BTC Long P&L:        ${btc_pnl_usd:+15,.2f} USD                                │")
+        print(f"│   ALT Short P&L:       ${weekly_alt_pnl_usd:+15,.2f} USD                                │")
+        print(f"│   ───────────────────────────────────────────────────────────────────────  │")
+        print(f"│   TOTAL P&L:           ${total_weekly_pnl:+15,.2f} USD     (return: {weekly_return_pct:+7.2f}%)        │")
+        print("├─────────────────────────────────────────────────────────────────────────────┤")
+        print(f"│ UPDATED PORTFOLIO STATUS (AFTER P&L):                                        │")
+        print(f"│   Cumulative P&L:      ${cum_btc_pnl + cum_alt_pnl:+15,.2f} USD                                │")
+        print(f"│   Total equity:        ${equity:15,.2f} USD                                │")
+        print(f"│   BTC value:           ${btc_qty * btc_price1:15,.2f} USD     ({btc_qty * btc_price1/equity*100:6.2f}% of equity)    │")
+        print(f"│   ALT value:           ${sum(current_alt_values.values()):15,.2f} USD     ({sum(current_alt_values.values())/equity*100:6.2f}% of equity)    │")
+        print("└─────────────────────────────────────────────────────────────────────────────┘")
         
+        # Stop if equity invalid
         if equity <= 0 or pd.isna(equity):
             print("\nEquity invalid or below zero, stopping backtest.")
             break
-
-        # Show closing message for this week
-        if i < len(weeks) - 2:  # Pokud není poslední týden
-            # Rebalance for next week - section header
-            print("\n")
-            print("┌───────────────────────────────────────────────────────────────────────────────────────┐")
-            print(f"│                  ⚖️  REBALANCOVÁNÍ PRO ZAČÁTEK TÝDNE {i+2}                            │")
-            print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-            print(f"│ Cíl rebalancování: Vrátit poměr BTC/ALT na {btc_w*100:.0f}/{alt_w*100:.0f} pro maximalizaci strategie            │")
-            print("└───────────────────────────────────────────────────────────────────────────────────────┘")
-            print("\n")
-        else:
-            # Poslední týden - ukončení backtestování bez rebalancování
-            print("\n")
-            print("┌───────────────────────────────────────────────────────────────────────────────────────┐")
-            print(f"│                       🏁 KONEC BACKTESTOVÁNÍ - POSLEDNÍ TÝDEN                          │")
-            print("└───────────────────────────────────────────────────────────────────────────────────────┘")
-            print("\n")
-            # Pokračujeme na finální souhrn
-            break
-        
-        # Rebalance BTC position - zde přenastavujeme pozice pro PŘÍŠTÍ týden
-        current_btc_qty = btc_qty  # Aktuální množství BTC před rebalancováním
-        current_btc_value = current_btc_qty * btc_price1  # Aktuální hodnota BTC
-        
-        # Pro lepší porozumění zobrazíme i cílový ekvity split 50/50
-        target_btc_value = equity * btc_w
-        target_alt_value = equity * alt_w
-        
-        # BTC rebalance information
-        print("┌───────────────────────────────────────────────────────────────────────────────────────┐")
-        print(f"│                         🔵 BTC REBALANCOVÁNÍ - PŘÍŠTÍ TÝDEN                           │")
-        print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-        print(f"│ 1️⃣ AKTUÁLNÍ STAV PŘED REBALANCOVÁNÍM ({pd.Timestamp(t1).strftime('%d.%m.%Y')}):                                │")
-        print(f"│   • Nové celkové equity: ${equity:15,.2f} USD (včetně všech zisků/ztrát)          │")
-        print(f"│   • BTC hodnota:         ${current_btc_value:15,.2f} USD = {current_btc_value/equity*100:6.2f}% z equity           │")
-        print(f"│   • ALT hodnota:         ${sum(current_alt_values.values()) if 'current_alt_values' in locals() else 0:15,.2f} USD = {sum(current_alt_values.values())/equity*100 if 'current_alt_values' in locals() and equity > 0 else 0:6.2f}% z equity           │")
-        print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-        print(f"│ 2️⃣ CÍLOVÝ STAV PO REBALANCOVÁNÍ:                                                       │")
-        print(f"│   • Cíl BTC leg:         ${target_btc_value:15,.2f} USD = přesně {btc_w*100:3.0f}% z equity          │")
-        print(f"│   • Cíl ALT leg:         ${target_alt_value:15,.2f} USD = přesně {alt_w*100:3.0f}% z equity          │")
-        print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-        
-        # Provedeme rebalancování - určíme nové množství BTC pro PŘÍŠTÍ týden
-        new_btc_qty = (btc_w * equity) / btc_price1
-        new_btc_value = new_btc_qty * btc_price1
-        
-        # Vypočítáme a zobrazíme procentuální změny
-        qty_change = new_btc_qty - current_btc_qty
-        qty_change_pct = (qty_change / current_btc_qty) * 100 if current_btc_qty != 0 else 0
-        value_change = new_btc_value - current_btc_value
-        
-        print(f"│ 3️⃣ VÝPOČET NOVÉHO MNOŽSTVÍ BTC:                                                         │")
-        print(f"│   • Vzorec:              (Cílový % × Equity) ÷ Aktuální cena BTC                     │")
-        print(f"│   • Výpočet:             ({btc_w:.2f} × ${equity:,.2f}) ÷ ${btc_price1:,.2f} = {new_btc_qty:.6f} BTC           │")
-        print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-        print(f"│ 4️⃣ REBALANCOVANÁ BTC POZICE PRO TÝDEN {i+2}:                                             │")
-        print(f"│   • Stávající množství:  {current_btc_qty:15.6f} BTC                                          │")
-        print(f"│   • Nové množství:       {new_btc_qty:15.6f} BTC   (změna: {qty_change:+.6f} BTC)            │")
-        print(f"│   • Stávající hodnota:   ${current_btc_value:15,.2f} USD = {current_btc_value/equity*100:6.2f}% z equity           │")
-        print(f"│   • Nová hodnota:        ${new_btc_value:15,.2f} USD = {new_btc_value/equity*100:6.2f}% z equity           │")
-        print(f"│                                                                                       │")
-        print(f"│   Potřebná změna pozice: {qty_change:+15.6f} BTC    ({qty_change_pct:+7.2f}%)                   │")
-        print("└───────────────────────────────────────────────────────────────────────────────────────┘")
-        
-        # Nastavíme nové množství BTC pro příští týden
-        btc_qty = new_btc_qty
-        print("\n")
-        
-        # Rebalance ALT shorts
-        alt_notional_usd_target = alt_w * equity
-        # Aplikujeme filtr pro excluded symboly
-        filtered_w1 = w1[~w1.index.isin(excluded)]
-        # Výslovně ověříme, že BTC není v datasetu
-        if "BTC" in filtered_w1.index:
-            print(f"WARNING: BTC found in filtered dataframe during rebalancing, removing it")
-            filtered_w1 = filtered_w1.drop("BTC", errors="ignore")
-        # Nyní vybereme top_n podle ranku
-        alts_df_t1 = filtered_w1.nsmallest(top_n, "rank") if not filtered_w1.empty else filtered_w1
-        new_alt_qty = {}
-        actual_alt_usd_value_total = 0.0
-        
-        if not alts_df_t1.empty:
-            tot_mcap = alts_df_t1["mcap_btc"].sum()
             
-            if tot_mcap > 0 and not pd.isna(tot_mcap):
-                # Check for changes in the basket composition
-                old_symbols = set(alt_qty.keys())
-                new_symbols = set(alts_df_t1.index)
-                added = new_symbols - old_symbols
-                removed = old_symbols - new_symbols
-                
-                # Informace o rebalancování ALT koše
-                print("┌───────────────────────────────────────────────────────────────────────────────────────┐")
-                print(f"│                             🔴 ALT REBALANCOVÁNÍ                                       │")
-                print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-                
-                if added or removed:
-                    print(f"│ ZMĚNY VE SLOŽENÍ ALT KOŠE:                                                            │")
-                    if added:
-                        added_str = ', '.join(sorted(added))
-                        print(f"│   Přidáno do koše:      {added_str:<60}  │")
-                    if removed:
-                        removed_str = ', '.join(sorted(removed))
-                        print(f"│   Odebráno z koše:      {removed_str:<60}  │")
-                    print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-                else:
-                    print(f"│ Složení ALT koše zůstává beze změny.                                                 │")
-                    print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-                
-                # Calculate new quantities
-                alt_data = {}
-                
-                for sym, r in alts_df_t1.iterrows():
-                    if not pd.isna(r.price_btc) and r.price_btc != 0 and not pd.isna(r.mcap_btc):
-                        weight = r.mcap_btc / tot_mcap
-                        alt_weights[sym] = weight
-                        
-                        alt_usd_target_sym = alt_notional_usd_target * weight
-                        qty = -(alt_usd_target_sym / (r.price_btc * btc_price1))
-                        new_alt_qty[sym] = qty
-                        
-                        value = abs(qty * r.price_btc * btc_price1)
-                        alt_values[sym] = value
-                        actual_alt_usd_value_total += value
-                        
-                        # Store data for next iteration
-                        alt_data[sym] = {
-                            'rank': r.rank,
-                            'qty': qty,
-                            'price_btc': r.price_btc,
-                            'price_usd': r.price_usd,
-                            'mcap_btc': r.mcap_btc
-                        }
-                        
-                        # Store for price comparison
-                        prev_alt_data[sym] = {
-                            'price_btc': r.price_btc,
-                            'price_usd': r.price_usd
-                        }
-                
-                # Print rebalanced portfolio
-                if alt_data:
-                    print_alt_portfolio_table(alt_data, alt_weights, alt_values, "🔄 REBALANCED ALT SHORT BASKET")
-                
-                # Přidáme souhrnný řádek o rebalancování ALT koše
-                old_alt_value = sum(current_alt_values.values()) if 'current_alt_values' in locals() else 0
-                new_alt_value = sum(alt_values.values())
-                value_change = new_alt_value - old_alt_value
-                
-                print("┌───────────────────────────────────────────────────────────────────────────────────────┐")
-                print(f"│                      🔴 ALT SHORT REBALANCOVÁNÍ - PŘÍŠTÍ TÝDEN                        │")
-                print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-                print(f"│ 1️⃣ PŮVODNÍ ALT POZICE:                                                                 │")
-                print(f"│   • Počet ALT mincí:      {len(alt_qty) if 'current_alt_values' in locals() else 0:15d}                                             │")
-                print(f"│   • Hodnota ALT pozic:    ${old_alt_value:15,.2f} USD = {old_alt_value/equity*100 if equity > 0 else 0:6.2f}% z equity           │")
-                print("├───────────────────────────────────────────────────────────────────────────────────────┤")
-                print(f"│ 2️⃣ REBALANCOVANÁ ALT POZICE:                                                           │")
-                print(f"│   • Počet ALT mincí:      {len(alt_qty):15d}                                             │")
-                print(f"│   • Cílová hodnota:       ${alt_notional_usd_target:15,.2f} USD = přesně {alt_w*100:3.0f}% z equity       │")
-                print(f"│   • Skutečná hodnota:     ${new_alt_value:15,.2f} USD = {new_alt_value/equity*100:6.2f}% z equity           │")
-                print(f"│   • Změna v hodnotě:      ${value_change:+15,.2f} USD                                        │")
-                print("└───────────────────────────────────────────────────────────────────────────────────────┘")
-            else:
-                print("No valid ALTs in rebalanced basket.")
-        else:
-            print("No altcoins available. Clearing ALT short positions.")
-        
-        alt_qty = new_alt_qty
-
         # Save performance metrics for this week
         rows.append({
             "Date": pd.Timestamp(t1),
@@ -923,32 +569,197 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
             "BTC_Price_USD": btc_price1,
             "BtcQty": btc_qty,
             "BtcHold_USD": btc_qty * btc_price1,
-            "AltShortTarget_USD": alt_notional_usd_target,
-            "AltShortActual_USD": actual_alt_usd_value_total,
-            "AltShortCount": len(alt_qty),
+            "AltShortTarget_USD": alt_w * equity,
+            "AltShortActual_USD": sum(current_alt_values.values()) if current_alt_values else 0,
+            "AltShortCount": len(alt_coin_quantities),
             "Weekly_BTC_PNL_USD": btc_pnl_usd,
             "Weekly_ALT_PNL_USD": weekly_alt_pnl_usd,
             "Cum_BTC_PNL_USD": cum_btc_pnl,
             "Cum_ALT_PNL_USD": cum_alt_pnl,
-            "Cum_ALT_PNL_BTC": total_alt_pnl_btc,
             "Weekly_Return_Pct": weekly_return_pct
         })
+            
+        # Check if we should proceed with rebalancing
+        if i < len(weeks) - 2:  # Don't rebalance after the last week
+            # ===== 4. REBALANCE POSITIONS FOR NEXT WEEK =====
+            print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
+            print(f"│                  REBALANCING FOR WEEK {i+2}                                   │")
+            print("└─────────────────────────────────────────────────────────────────────────────┘")
+            print("\n")
+            
+            # 4.1 Rebalance BTC position
+            target_btc_value = equity * btc_w
+            target_alt_value = equity * alt_w
+            
+            # Print BTC rebalancing info
+            print("┌─────────────────────────────────────────────────────────────────────────────┐")
+            print(f"│                         BTC REBALANCING - NEXT WEEK                         │")
+            print("├─────────────────────────────────────────────────────────────────────────────┤")
+            print(f"│ CURRENT STATE BEFORE REBALANCING:                                           │")
+            print(f"│   • Total equity:        ${equity:15,.2f} USD                                │")
+            print(f"│   • BTC value:           ${btc_qty * btc_price1:15,.2f} USD = {btc_qty * btc_price1/equity*100:6.2f}% of equity    │")
+            print("├─────────────────────────────────────────────────────────────────────────────┤")
+            print(f"│ TARGET STATE AFTER REBALANCING:                                             │")
+            print(f"│   • Target BTC:          ${target_btc_value:15,.2f} USD = {btc_w*100:6.2f}% of equity    │")
+            print("├─────────────────────────────────────────────────────────────────────────────┤")
+            
+            # Calculate new BTC quantity using CURRENT week's end price (t1)
+            current_btc_qty = btc_qty
+            new_btc_qty = target_btc_value / btc_price1
+            
+            # Calculate percentage changes
+            qty_change = new_btc_qty - current_btc_qty
+            qty_change_pct = (qty_change / current_btc_qty) * 100 if current_btc_qty != 0 else 0
+            
+            print(f"│ NEW BTC POSITION CALCULATION:                                               │")
+            print(f"│   • Formula:             (Target % × Equity) ÷ Current BTC Price            │")
+            print(f"│   • Calculation:         ({btc_w:.2f} × ${equity:,.2f}) ÷ ${btc_price1:,.2f} = {new_btc_qty:.6f} BTC  │")
+            print("├─────────────────────────────────────────────────────────────────────────────┤")
+            print(f"│ REBALANCED BTC POSITION FOR WEEK {i+2}:                                       │")
+            print(f"│   • Current quantity:    {current_btc_qty:15.6f} BTC                                  │")
+            print(f"│   • New quantity:        {new_btc_qty:15.6f} BTC   (change: {qty_change:+.6f} BTC)    │")
+            print(f"│   • Current value:       ${current_btc_qty * btc_price1:15,.2f} USD = {current_btc_qty * btc_price1/equity*100:6.2f}% of equity    │")
+            print(f"│   • New value:           ${new_btc_qty * btc_price1:15,.2f} USD = {new_btc_qty * btc_price1/equity*100:6.2f}% of equity    │")
+            print(f"│                                                                             │")
+            print(f"│   Required position change: {qty_change:+15.6f} BTC    ({qty_change_pct:+7.2f}%)           │")
+            print("└─────────────────────────────────────────────────────────────────────────────┘")
+            
+            # Update BTC position for next week
+            btc_qty = new_btc_qty
+            
+            # 4.2 Rebalance ALT shorts using CURRENT week's data (t1)
+            alt_notional_usd_target = alt_w * equity
+            
+            # Apply filter for excluded symbols
+            filtered_w1 = w1[~w1.index.isin(excluded)]
+            if "BTC" in filtered_w1.index:
+                print(f"WARNING: BTC found in filtered dataframe during rebalancing, removing it")
+                filtered_w1 = filtered_w1.drop("BTC", errors="ignore")
+                
+            # Select top_n by rank
+            alts_df_t1 = filtered_w1.nsmallest(top_n, "rank") if not filtered_w1.empty else filtered_w1
+            
+            # Track which symbols are changing
+            old_symbols = set(alt_coin_quantities.keys())
+            new_symbols = set(alts_df_t1.index)
+            added = new_symbols - old_symbols
+            removed = old_symbols - new_symbols
+            
+            print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
+            print(f"│                           ALT BASKET REBALANCING                             │")
+            print("├─────────────────────────────────────────────────────────────────────────────┤")
+            
+            if added or removed:
+                if added:
+                    added_str = ', '.join(sorted(added))
+                    print(f"│ BASKET CHANGES:                                                             │")
+                    print(f"│   Added to basket:      {added_str:<50}  │")
+                if removed:
+                    removed_str = ', '.join(sorted(removed))
+                    print(f"│   Removed from basket:  {removed_str:<50}  │")
+                print("├─────────────────────────────────────────────────────────────────────────────┤")
+            else:
+                print(f"│ Basket composition remains unchanged.                                        │")
+                print("├─────────────────────────────────────────────────────────────────────────────┤")
+                
+            # Initialize new ALT tracking dictionaries
+            new_alt_coin_quantities = {}
+            new_alt_notional_values = {}
+            new_alt_weights = {}
+            new_alt_values = {}
+            
+            if not alts_df_t1.empty:
+                tot_mcap = alts_df_t1["mcap_btc"].sum()
+                
+                if tot_mcap > 0 and not pd.isna(tot_mcap):
+                    # Calculate new quantities
+                    alt_data = {}
+                    
+                    for sym, r in alts_df_t1.iterrows():
+                        if not pd.isna(r.price_usd) and r.price_usd != 0 and not pd.isna(r.mcap_btc):
+                            # Calculate weight based on market cap using CURRENT week data
+                            weight = r.mcap_btc / tot_mcap
+                            new_alt_weights[sym] = weight
+                            
+                            # Calculate target USD value for this altcoin
+                            target_usd_value = alt_notional_usd_target * weight
+                            
+                            # IMPORTANT: Calculate coin quantity using CURRENT WEEK prices (t1)
+                            # This is for next week's positions
+                            coin_qty = -target_usd_value / r.price_usd
+                            new_alt_coin_quantities[sym] = coin_qty
+                            
+                            # Store notional USD value (negative for short)
+                            new_alt_notional_values[sym] = -target_usd_value
+                            
+                            # Store position value (absolute)
+                            new_alt_values[sym] = abs(new_alt_notional_values[sym])
+                            
+                            # Store data for display
+                            alt_data[sym] = {
+                                'rank': r.rank,
+                                'qty': coin_qty,  # Actual coin quantity (negative for short)
+                                'price_usd': r.price_usd,
+                                'price_btc': r.price_btc,
+                                'mcap_btc': r.mcap_btc
+                            }
+                    
+                    # Print rebalanced portfolio
+                    if alt_data:
+                        print_alt_portfolio_table(alt_data, new_alt_weights, new_alt_values, "REBALANCED ALT SHORT BASKET")
+                    
+                    # Summary of rebalancing
+                    old_alt_value = sum(current_alt_values.values())
+                    new_alt_value = sum(new_alt_values.values())
+                    
+                    print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
+                    print(f"│                    ALT SHORT REBALANCING - NEXT WEEK                         │")
+                    print("├─────────────────────────────────────────────────────────────────────────────┤")
+                    print(f"│ ORIGINAL ALT POSITIONS:                                                      │")
+                    print(f"│   Number of ALTs:       {len(alt_coin_quantities):15d}                                         │")
+                    print(f"│   ALT Position Value:   ${old_alt_value:15,.2f} USD = {old_alt_value/equity*100:6.2f}% of equity    │")
+                    print("├─────────────────────────────────────────────────────────────────────────────┤")
+                    print(f"│ REBALANCED ALT POSITIONS:                                                    │")
+                    print(f"│   Number of ALTs:       {len(new_alt_coin_quantities):15d}                                         │")
+                    print(f"│   Target Value:         ${alt_notional_usd_target:15,.2f} USD = {alt_w*100:6.2f}% of equity    │")
+                    print(f"│   Actual Value:         ${new_alt_value:15,.2f} USD = {new_alt_value/equity*100:6.2f}% of equity    │")
+                    print("└─────────────────────────────────────────────────────────────────────────────┘")
+                    
+                    # Update ALT positions for next week
+                    alt_coin_quantities = new_alt_coin_quantities
+                    alt_notional_values = new_alt_notional_values
+                    alt_weights = new_alt_weights
+                    alt_values = new_alt_values
+                else:
+                    print("No valid ALTs in rebalanced basket.")
+            else:
+                print("No altcoins available. Clearing ALT short positions.")
+                alt_coin_quantities.clear()
+                alt_notional_values.clear()
+                alt_weights.clear()
+                alt_values.clear()
+        else:
+            # Last week - end of backtest
+            print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
+            print(f"│                       END OF BACKTEST - FINAL WEEK                           │")
+            print("└─────────────────────────────────────────────────────────────────────────────┘")
 
+    # ===== FINAL SUMMARY =====
     print("\n\n")
-    print("┏" + "━" * 102 + "┓")
-    print(f"┃{'📊 VÝSLEDKY BACKTESTOVÁNÍ - CELKOVÝ SOUHRN':^102}┃")
-    print("┗" + "━" * 102 + "┛")
+    print("┏" + "━" * 80 + "┓")
+    print(f"┃{'BACKTEST RESULTS - FINAL SUMMARY':^80}┃")
+    print("┗" + "━" * 80 + "┛")
     print("\n")
+    
     perf_df = pd.DataFrame(rows)
     
     # Create detailed positions DataFrame
     detailed_df = pd.DataFrame(detailed_positions) if detailed_positions else pd.DataFrame()
     
-    # Calculate final equity and BTC equivalent
+    # Calculate summary statistics
     final_btc_price = perf_df.iloc[-1]["BTC_Price_USD"] if not perf_df.empty and "BTC_Price_USD" in perf_df.columns else 0
     btc_equiv = equity / final_btc_price if final_btc_price and final_btc_price != 0 else 0
     
-    # Calculate summary statistics
     total_return_pct = ((equity - start_cap) / start_cap) * 100
     weekly_returns = perf_df["Weekly_Return_Pct"].dropna().values if not perf_df.empty else []
     annualized_return = total_return_pct * (52 / len(weekly_returns)) if weekly_returns.size > 0 else 0
@@ -958,7 +769,6 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
     summary = {
         "cum_btc_pnl": cum_btc_pnl,
         "cum_alt_pnl": cum_alt_pnl,
-        "cum_alt_pnl_btc": total_alt_pnl_btc,
         "final_equity": equity,
         "btc_equiv": btc_equiv,
         "total_return_pct": total_return_pct,
@@ -1025,7 +835,7 @@ def plot_equity_curve(perf_df: pd.DataFrame, summary: dict, start_date: dt.datet
         if not plot_data.empty:
             # Create subplots: equity curve and weekly returns
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), 
-                                           gridspec_kw={'height_ratios': [3, 1]})
+                                         gridspec_kw={'height_ratios': [3, 1]})
             
             # --- Equity Curve (Top Plot) ---
             ymin = min(START_CAP, plot_data["Equity_USD"].min()) * 0.9
@@ -1156,24 +966,17 @@ def plot_btc_vs_alts(perf_df: pd.DataFrame) -> plt.Figure:
 
 
 def export_detailed_report(perf_df: pd.DataFrame, summary: dict, detailed_df: pd.DataFrame, 
-                           start_date: dt.datetime, end_date: dt.datetime):
+                         start_date: dt.datetime, end_date: dt.datetime):
     """Export detailed backtest report to CSV files and plots."""
     # Create reports directory if it doesn't exist
     REPORTS_DIR.mkdir(exist_ok=True)
     
-    # Pokud potřebujeme přepsat všechny staré reporty, vymažeme existující soubory
+    # Delete existing files if overwrite is needed
     if OVERWRITE_REPORTS:
-        # Vymaž existující soubory s konkrétními názvy
-        for old_file in REPORTS_DIR.glob("performance_*.csv"):
-            old_file.unlink(missing_ok=True)
-        for old_file in REPORTS_DIR.glob("positions_*.csv"):
-            old_file.unlink(missing_ok=True)
-        for old_file in REPORTS_DIR.glob("summary_*.txt"):
-            old_file.unlink(missing_ok=True)
-        for old_file in REPORTS_DIR.glob("equity_curve_*.png"):
-            old_file.unlink(missing_ok=True)
-        for old_file in REPORTS_DIR.glob("contribution_*.png"):
-            old_file.unlink(missing_ok=True)
+        for pattern in ["performance_*.csv", "positions_*.csv", "summary_*.txt", 
+                      "equity_curve_*.png", "contribution_*.png"]:
+            for old_file in REPORTS_DIR.glob(pattern):
+                old_file.unlink(missing_ok=True)
     
     # Generate timestamp for filenames
     timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1195,10 +998,6 @@ def export_detailed_report(perf_df: pd.DataFrame, summary: dict, detailed_df: pd
     with open(summary_file, "w") as f:
         f.write(f"Backtest Summary: {start_date.date()} to {end_date.date()}\n")
         f.write(f"Strategy: {BTC_W*100:.0f}% BTC long vs {ALT_W*100:.0f}% ALT short (Top {TOP_N})\n\n")
-        
-        # Calculate contribution percentages
-        btc_contrib_pct = summary['cum_btc_pnl'] / (summary['final_equity'] - START_CAP) * 100 if summary['final_equity'] != START_CAP else 0
-        alt_contrib_pct = summary['cum_alt_pnl'] / (summary['final_equity'] - START_CAP) * 100 if summary['final_equity'] != START_CAP else 0
         
         f.write("Contribution Analysis:\n")
         f.write(f"BTC Long P/L:      ${summary['cum_btc_pnl']:+,.2f}\n")
@@ -1231,7 +1030,6 @@ def export_detailed_report(perf_df: pd.DataFrame, summary: dict, detailed_df: pd
         print(f"Exported contribution plot to {contrib_plot_file}")
 
 
-
 def main():
     if not CSV_PATH.exists():
         print(f"CSV not found: {CSV_PATH}")
@@ -1248,35 +1046,32 @@ def main():
     
     # Display summary
     if summary:
-        print_header("🏁 FINAL SUMMARY")
+        print("\n========== FINAL SUMMARY ==========")
         
         # Contribution analysis
-        btc_contrib_pct = summary['cum_btc_pnl'] / (summary['final_equity'] - START_CAP) * 100 if summary['final_equity'] != START_CAP else 0
-        alt_contrib_pct = summary['cum_alt_pnl'] / (summary['final_equity'] - START_CAP) * 100 if summary['final_equity'] != START_CAP else 0
+        print("\n┌─────────────────────────────────────────────────────┐")
+        print("│                CONTRIBUTION ANALYSIS                 │")
+        print("├─────────────────────────────────────────────────────┤")
+        print(f"│ BTC Long P&L:      ${summary['cum_btc_pnl']:+15,.2f} USD        │")
+        print(f"│ ALT Short P&L:     ${summary['cum_alt_pnl']:+15,.2f} USD        │")
+        print(f"├─────────────────────────────────────────────────────┤")
+        print(f"│ Total P&L:         ${summary['cum_btc_pnl'] + summary['cum_alt_pnl']:+15,.2f} USD        │")
+        print("└─────────────────────────────────────────────────────┘")
         
-        print("┌─────────────────────────────────────────────────────────────┐")
-        print("│                    CONTRIBUTION ANALYSIS                     │")
-        print("├─────────────────────────────────────────────────────────────┤")
-        print(f"│ 🔵 BTC Long P/L:      ${summary['cum_btc_pnl']:+15,.2f} USD            │")
-        print(f"│ 🔴 ALT Short P/L:     ${summary['cum_alt_pnl']:+15,.2f} USD            │")
-        print(f"├─────────────────────────────────────────────────────────────┤")
-        print(f"│ 📊 Total P/L:         ${summary['cum_btc_pnl'] + summary['cum_alt_pnl']:+15,.2f} USD            │")
-        print("└─────────────────────────────────────────────────────────────┘")
-        
-        print("\n┌─────────────────────────────────────────────────────────────┐")
-        print("│                     PERFORMANCE METRICS                      │")
-        print("├─────────────────────────────────────────────────────────────┤")
-        print(f"│ 💰 Initial capital:   ${START_CAP:15,.2f} USD            │")
-        print(f"│ 💰 Final equity:      ${summary['final_equity']:15,.2f} USD            │")
-        print(f"├─────────────────────────────────────────────────────────────┤")
-        print(f"│ 📈 Total return:      {summary['total_return_pct']:+15.2f}%              │")
-        print(f"│ 📈 Annualized return: {summary['annualized_return']:+15.2f}%              │")
-        print(f"│ 📉 Maximum drawdown:  {summary['max_drawdown']:15.2f}%              │")
-        print(f"├─────────────────────────────────────────────────────────────┤")
-        print(f"│ 📊 Sharpe ratio:      {summary['sharpe_ratio']:15.2f}               │")
-        print(f"│ 📊 Sortino ratio:     {summary['sortino_ratio']:15.2f}               │")
-        print(f"│ 📊 Win rate:          {summary['win_rate']:15.1f}%              │")
-        print("└─────────────────────────────────────────────────────────────┘")
+        print("\n┌─────────────────────────────────────────────────────┐")
+        print("│                 PERFORMANCE METRICS                  │")
+        print("├─────────────────────────────────────────────────────┤")
+        print(f"│ Initial capital:   ${START_CAP:15,.2f} USD        │")
+        print(f"│ Final equity:      ${summary['final_equity']:15,.2f} USD        │")
+        print(f"├─────────────────────────────────────────────────────┤")
+        print(f"│ Total return:      {summary['total_return_pct']:+15.2f}%          │")
+        print(f"│ Annualized return: {summary['annualized_return']:+15.2f}%          │")
+        print(f"│ Maximum drawdown:  {summary['max_drawdown']:15.2f}%          │")
+        print(f"├─────────────────────────────────────────────────────┤")
+        print(f"│ Sharpe ratio:      {summary['sharpe_ratio']:15.2f}           │")
+        print(f"│ Sortino ratio:     {summary['sortino_ratio']:15.2f}           │")
+        print(f"│ Win rate:          {summary['win_rate']:15.1f}%          │")
+        print("└─────────────────────────────────────────────────────┘")
         
         # Export detailed report
         export_detailed_report(perf, summary, detailed, START_DATE, END_DATE)

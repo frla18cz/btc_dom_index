@@ -38,6 +38,6 @@ BACKTEST_END_DATE = dt.datetime(2025, 5, 1)     # End date for backtesting
 
 # Strategy parameters
 BACKTEST_INITIAL_CAPITAL = 100_000.0  # Starting capital in USD
-BACKTEST_BTC_WEIGHT = 0.5              # Weight of BTC in the portfolio (0-1)
-BACKTEST_ALT_WEIGHT = 0.5              # Weight of alts in the portfolio (0-1)
+BACKTEST_BTC_WEIGHT = 0.0            # Weight of BTC in the portfolio (0-1)
+BACKTEST_ALT_WEIGHT = 1.0            # Weight of alts in the portfolio (0-1)
 BACKTEST_TOP_N_ALTS = 1               # Number of top alts to include in the short basket
