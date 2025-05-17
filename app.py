@@ -43,13 +43,18 @@ st.set_page_config(
 st.title("Bitcoin Dominance Index Backtest")
 st.markdown("""
 This app lets you backtest a strategy of going long on Bitcoin (BTC) while shorting a basket of altcoins.
-The strategy implements weekly rebalancing to maintain target weights.
+The strategy implements weekly rebalancing to maintain target weights and supports leveraged positions.
 
 ### Strategy Logic
-1. Go long on Bitcoin (BTC) with a configurable portion of equity
-2. Go short on a basket of top altcoins with the remaining portion of equity
-3. Rebalance weekly to maintain target allocations
-4. Track performance in both USD and BTC terms
+1. Go long on Bitcoin (BTC) with a configurable portion of equity (0% to 300%)
+2. Go short on a basket of top altcoins with a configurable portion of equity (0% to 300%)
+3. Rebalance weekly to maintain target weights
+4. Track performance in USD terms
+
+### Leverage Options
+- **Standard (1.0x)**: BTC weight + ALT weight = 1.0 (no leverage, fully invested)
+- **Leveraged (>1.0x)**: BTC weight + ALT weight > 1.0 (e.g., 1.5x BTC + 1.5x ALT = 3.0x leverage)
+- **Partial (<1.0x)**: BTC weight + ALT weight < 1.0 (keeps portion in cash)
 """)
 
 # Sidebar configuration
@@ -91,23 +96,31 @@ st.sidebar.subheader("Portfolio Allocation")
 btc_weight = st.sidebar.slider(
     "BTC Long Weight",
     min_value=0.0,
-    max_value=1.0,
+    max_value=3.0,
     value=BACKTEST_BTC_WEIGHT,
-    step=0.05,
+    step=0.1,
     format="%.2f",
 )
 alt_weight = st.sidebar.slider(
     "ALT Short Weight",
     min_value=0.0,
-    max_value=1.0,
+    max_value=3.0,
     value=BACKTEST_ALT_WEIGHT,
-    step=0.05,
+    step=0.1,
     format="%.2f",
 )
 
-# Check if weights sum to 1.0
-if abs(btc_weight + alt_weight - 1.0) > 0.01:
-    st.sidebar.warning("Warning: Weights don't sum to 1.0. Consider adjusting.")
+# Check if total leverage exceeds 3.0 (300%)
+total_leverage = btc_weight + alt_weight
+if total_leverage > 3.0:
+    st.sidebar.warning(f"Warning: Total leverage ({total_leverage:.2f}) exceeds 3.0. This may result in excessive risk.")
+
+# Show current leverage information
+st.sidebar.info(f"Total leverage: {total_leverage:.2f}x")
+
+# If weights don't sum to 1.0, inform the user this is intentional
+if abs(total_leverage - 1.0) > 0.01:
+    st.sidebar.info("Note: Weights don't sum to 1.0, which means you're using leverage or partial capital allocation.")
 
 # Number of altcoins in the short basket
 top_n_alts = st.sidebar.slider(
@@ -285,17 +298,26 @@ else:
     
     ### Key Parameters
     
-    - **BTC Long Weight**: Percentage of portfolio allocated to Bitcoin long position
-    - **ALT Short Weight**: Percentage of portfolio allocated to shorting altcoins
+    - **BTC Long Weight**: Percentage of portfolio allocated to Bitcoin long position (0-300%)
+    - **ALT Short Weight**: Percentage of portfolio allocated to shorting altcoins (0-300%)
     - **Number of ALTs in Short Basket**: How many top altcoins to include in the short basket
     - **Excluded Tokens**: Tokens that should never be included in the short basket (e.g., stablecoins)
     
     ### How It Works
     
-    1. The strategy takes positions based on your configured weights
-    2. Every week, positions are rebalanced to maintain target allocations
-    3. Performance is tracked in USD terms
-    4. The backtest shows detailed P/L for both the BTC long and ALT short components
+    1. The strategy simulates futures perpetual positions for both BTC long and ALT shorts
+    2. You can configure leverage from 0% to 300% for each leg independently
+    3. Every week, positions are rebalanced to maintain target allocations
+    4. Performance is tracked in USD terms with mark-to-market valuations
+    5. The backtest shows detailed P/L for both the BTC long and ALT short components
+    
+    ### Leverage Examples
+    
+    - **Classic 1:1 Hedge**: 50% BTC long + 50% ALT short (total leverage = 1.0x)
+    - **High Conviction BTC**: 100% BTC long + 50% ALT short (total leverage = 1.5x)
+    - **High Conviction ALT Short**: 50% BTC long + 100% ALT short (total leverage = 1.5x)
+    - **Maximum Leverage**: 150% BTC long + 150% ALT short (total leverage = 3.0x)
+    - **Cash Reserve**: 30% BTC long + 30% ALT short (total leverage = 0.6x, 40% cash)
     """)
 
 # Footer with additional information
