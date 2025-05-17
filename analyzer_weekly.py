@@ -205,7 +205,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
     
     # Calculate total leverage
     total_leverage = btc_w + alt_w
-    print(f"\n========== BACKTEST: {btc_w*100:.0f}% BTC + {alt_w*100:.0f}% ALT Short (Top {top_n}) ==========")
+    print(f"\n========== BACKTEST: {btc_w*100:.1f}% BTC + {alt_w*100:.1f}% ALT Short (Top {top_n}) ==========")
     print(f"Date Range: {pd.Timestamp(weeks[0]).date()} to {pd.Timestamp(weeks[-1]).date()}")
     print(f"Total Leverage: {total_leverage:.2f}x")
     print(f"Excluded Tokens: {', '.join(sorted(excluded))}")
@@ -868,7 +868,7 @@ def plot_equity_curve(perf_df: pd.DataFrame, summary: dict, start_date: dt.datet
                     top_n = int(first_row["AltShortCount"]) if "AltShortCount" in first_row else 0
                     total_leverage = btc_weight + alt_weight
                     
-                    strategy_title = f"{btc_weight*100:.0f}% BTC long + {alt_weight*100:.0f}% ALT short (Top {top_n}, {total_leverage:.1f}x leverage)"
+                    strategy_title = f"{btc_weight*100:.1f}% BTC long + {alt_weight*100:.1f}% ALT short (Top {top_n}, {total_leverage:.1f}x leverage)"
             
             date_range = f"[{start_date.date()} to {end_date.date()}]"
             ax1.set_title(f"{strategy_title}\n{date_range}", fontsize=14)
@@ -967,7 +967,7 @@ def plot_btc_vs_alts(perf_df: pd.DataFrame) -> plt.Figure:
                 alt_weight = first_row["AltShortTarget_USD"] / first_row["Equity_USD"] if first_row["Equity_USD"] > 0 else 0
                 total_leverage = btc_weight + alt_weight
                 
-                strategy_title = f"BTC Long ({btc_weight*100:.0f}%) vs ALT Short ({alt_weight*100:.0f}%) - P/L Contribution ({total_leverage:.1f}x leverage)"
+                strategy_title = f"BTC Long ({btc_weight*100:.1f}%) vs ALT Short ({alt_weight*100:.1f}%) - P/L Contribution ({total_leverage:.1f}x leverage)"
         
         # Style the plot
         ax.set_title(strategy_title, fontsize=14)
@@ -1043,7 +1043,7 @@ def export_detailed_report(perf_df: pd.DataFrame, summary: dict, detailed_df: pd
             top_n_alts = TOP_N
             total_leverage = btc_weight + ALT_weight
         
-        f.write(f"Strategy: {btc_weight*100:.0f}% BTC long + {ALT_weight*100:.0f}% ALT short (Top {top_n_alts})\n")
+        f.write(f"Strategy: {btc_weight*100:.1f}% BTC long + {ALT_weight*100:.1f}% ALT short (Top {top_n_alts})\n")
         f.write(f"Total Leverage: {total_leverage:.2f}x\n\n")
         
         f.write("Contribution Analysis:\n")
