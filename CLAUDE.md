@@ -67,7 +67,15 @@ The web app includes:
 - **Smart date selection**: Shows available data range and prevents invalid date selection
 - **Visual feedback**: Clear indicators of data availability and period selection
 - **Real-time validation**: Checks if selected dates have data available
+- **Automatic data updates**: Built-in data management with one-click updates for missing data
 - **Comprehensive configuration**: Leverage, altcoin basket size, excluded tokens
+
+#### Automatic Data Management
+The Streamlit app automatically:
+- Detects when new weekly data is available
+- Shows a notification in the sidebar with the number of missing snapshots
+- Provides a "🔄 Update Data" button to download missing data directly from the UI
+- Updates the dataset and refreshes the interface automatically
 
 ## Code Architecture
 

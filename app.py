@@ -11,6 +11,8 @@ import sys
 import io
 import numpy as np
 from tabulate import tabulate
+import asyncio
+import threading
 
 # Import the analyzer functionality directly from analyzer_weekly
 from analyzer_weekly import (
@@ -30,6 +32,51 @@ from config.config import (
     BACKTEST_ALT_WEIGHT,
     BACKTEST_TOP_N_ALTS
 )
+
+# Import fetcher functions
+from fetcher import get_last_date_from_csv, scrape_historical, mondays
+
+def check_for_new_data(csv_file):
+    """Check if new data is available since the last date in CSV."""
+    last_date = get_last_date_from_csv(csv_file)
+    if not last_date:
+        return None, None
+    
+    # Calculate next Monday after last date
+    next_monday = last_date + dt.timedelta(days=(7 - last_date.weekday()) % 7)
+    if next_monday == last_date:  # if last_date is already Monday
+        next_monday += dt.timedelta(days=7)
+    
+    today = dt.date.today()
+    if next_monday <= today:
+        # Check how many new snapshots would be available
+        new_mondays = list(mondays(next_monday, today))
+        return next_monday, len(new_mondays)
+    
+    return None, 0
+
+def update_data_with_progress(csv_file, start_date):
+    """Update data with progress tracking."""
+    try:
+        # Scrape new data
+        new_df = scrape_historical(start_date=start_date)
+        
+        if not new_df.empty:
+            # Load existing data and append new data
+            existing_df = pd.read_csv(csv_file)
+            existing_df['snapshot_date'] = pd.to_datetime(existing_df['snapshot_date'])
+            
+            combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+            combined_df = combined_df.sort_values('snapshot_date').reset_index(drop=True)
+            
+            # Save combined data
+            combined_df.to_csv(csv_file, index=False)
+            return len(new_df), len(combined_df)
+        
+        return 0, 0
+    except Exception as e:
+        st.error(f"Error updating data: {e}")
+        return None, None
 
 # Configure page settings
 st.set_page_config(
@@ -55,6 +102,9 @@ The strategy implements weekly rebalancing to maintain target weights and suppor
 - **Standard (1.0x)**: BTC weight + ALT weight = 1.0 (no leverage, fully invested)
 - **Leveraged (>1.0x)**: BTC weight + ALT weight > 1.0 (e.g., 1.5x BTC + 1.5x ALT = 3.0x leverage)
 - **Partial (<1.0x)**: BTC weight + ALT weight < 1.0 (keeps portion in cash)
+
+### Data Management
+The app automatically checks for new weekly data and allows you to update it directly from the sidebar.
 """)
 
 # Sidebar configuration
@@ -76,6 +126,33 @@ if csv_path.exists():
         # Show available data range
         st.sidebar.success(f"📊 **Available Data Range:**\n{available_start_date} to {available_end_date}")
         st.sidebar.info(f"Total snapshots: {len(df_dates)}")
+        
+        # Check for new data availability
+        next_date, new_count = check_for_new_data(csv_path)
+        if new_count > 0:
+            st.sidebar.warning(f"📥 **{new_count} new snapshots available** from {next_date}")
+            
+            # Add update button
+            if st.sidebar.button("🔄 Update Data", type="secondary", help="Download missing data"):
+                with st.sidebar:
+                    st.info("Downloading new data...")
+                    progress_bar = st.progress(0, text="Initializing...")
+                    
+                    # Update progress text
+                    progress_bar.progress(25, text="Scraping CoinMarketCap...")
+                    
+                    # Perform the update
+                    new_rows, total_rows = update_data_with_progress(csv_path, next_date)
+                    
+                    if new_rows is not None:
+                        progress_bar.progress(100, text="Complete!")
+                        st.success(f"✅ Added {new_rows} new rows! Total: {total_rows}")
+                        st.rerun()  # Refresh the app to show new data
+                    else:
+                        st.error("❌ Failed to update data")
+        else:
+            st.sidebar.info("✅ Data is up to date")
+            
     except Exception as e:
         st.sidebar.warning(f"Could not read data file: {e}")
 
@@ -83,17 +160,25 @@ if csv_path.exists():
 st.sidebar.subheader("📅 Backtest Period")
 col1, col2 = st.sidebar.columns(2)
 with col1:
+    # Default start date to first Monday of 2025 if available, otherwise config default
+    default_start_2025 = dt.date(2025, 1, 6)  # First Monday of 2025
+    if available_start_date <= default_start_2025 <= available_end_date:
+        default_start = default_start_2025
+    else:
+        default_start = max(BACKTEST_START_DATE.date(), available_start_date)
+    
     start_date = st.date_input(
         "Start Date",
-        value=max(BACKTEST_START_DATE.date(), available_start_date),
+        value=default_start,
         min_value=available_start_date,
         max_value=available_end_date,
         help=f"Available data starts from {available_start_date}"
     )
 with col2:
+    # Default end date to the last available data
     end_date = st.date_input(
         "End Date",
-        value=min(BACKTEST_END_DATE.date(), available_end_date),
+        value=available_end_date,  # Always use the last available date
         min_value=available_start_date,
         max_value=available_end_date,
         help=f"Available data ends on {available_end_date}"
