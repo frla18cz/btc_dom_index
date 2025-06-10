@@ -33,7 +33,19 @@ BTC Dominance Index is a cryptocurrency analysis tool that fetches historical ma
 ```bash
 python fetcher.py
 ```
-This will scrape historical weekly market cap data from CoinMarketCap and save it to `top100_weekly_2021-2025.csv`.
+This will automatically detect existing data and fetch only new snapshots from the last available date to today.
+
+**To add historical data from earlier periods (e.g., beginning of 2021)**
+```bash
+python fetcher.py --add-historical
+```
+This will add data from January 2021 to the earliest date in your existing dataset.
+
+The fetcher intelligently:
+- Detects existing data range in `top100_weekly_data.csv`
+- Fetches only missing data (either new or historical)
+- Merges new data with existing data automatically
+- Prevents duplicate snapshots
 
 ### Analysis and Backtesting
 
@@ -41,7 +53,7 @@ This will scrape historical weekly market cap data from CoinMarketCap and save i
 ```bash
 python analyzer_weekly.py
 ```
-This will load data from `top100_weekly_2021-2025.csv`, run a backtest of the strategy, and display a performance chart.
+This will load data from `top100_weekly_data.csv`, run a backtest of the strategy, and display a performance chart.
 
 ### Streamlit Web App
 
@@ -50,6 +62,20 @@ This will load data from `top100_weekly_2021-2025.csv`, run a backtest of the st
 streamlit run app.py
 ```
 This will launch a web interface that allows you to configure and run the backtesting strategy with custom parameters.
+
+The web app includes:
+- **Smart date selection**: Shows available data range and prevents invalid date selection
+- **Visual feedback**: Clear indicators of data availability and period selection
+- **Real-time validation**: Checks if selected dates have data available
+- **Automatic data updates**: Built-in data management with one-click updates for missing data
+- **Comprehensive configuration**: Leverage, altcoin basket size, excluded tokens
+
+#### Automatic Data Management
+The Streamlit app automatically:
+- Detects when new weekly data is available
+- Shows a notification in the sidebar with the number of missing snapshots
+- Provides a "🔄 Update Data" button to download missing data directly from the UI
+- Updates the dataset and refreshes the interface automatically
 
 ## Code Architecture
 
