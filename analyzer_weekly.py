@@ -798,12 +798,40 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
             benchmark_df = calculate_benchmark_performance(df, benchmark_weights, start_cap)
             if not benchmark_df.empty:
                 benchmark_comparison = compare_strategy_vs_benchmark(perf_df, benchmark_df, summary, start_cap)
-                print(f"\n========== BENCHMARK COMPARISON ==========")
-                print(f"Benchmark: {', '.join([f'{w*100:.1f}% {s}' for s, w in benchmark_weights.items() if w > 0])}")
-                print(f"Strategy Total Return: {summary['total_return_pct']:+.2f}%")
-                print(f"Benchmark Total Return: {benchmark_comparison.get('benchmark_total_return', 0):+.2f}%")
-                print(f"Alpha (Excess Return): {benchmark_comparison.get('alpha', 0):+.2f}%")
-                print(f"Correlation: {benchmark_comparison.get('correlation', 0):.3f}")
+                print(f"\n┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓")
+                print(f"┃                             BENCHMARK COMPARISON                             ┃")
+                print(f"┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛")
+                
+                benchmark_desc = ', '.join([f'{w*100:.1f}% {s}' for s, w in benchmark_weights.items() if w > 0])
+                print(f"\nBenchmark Portfolio: {benchmark_desc}")
+                print(f"Analysis Period: {len(perf_df)} weeks\n")
+                
+                print(f"┌─────────────────────────────────────────────────────────────────────────────┐")
+                print(f"│                              PERFORMANCE METRICS                             │")
+                print(f"├─────────────────────────────────────────────────────────────────────────────┤")
+                print(f"│ Strategy Total Return:     {summary['total_return_pct']:+8.2f}%                              │")
+                print(f"│ Benchmark Total Return:    {benchmark_comparison.get('benchmark_total_return', 0):+8.2f}%                              │")
+                print(f"│ Alpha (Excess Return):     {benchmark_comparison.get('alpha', 0):+8.2f}%                              │")
+                print(f"├─────────────────────────────────────────────────────────────────────────────┤")
+                print(f"│ Strategy Annualized:       {summary['annualized_return']:+8.2f}%                              │")
+                print(f"│ Benchmark Annualized:      {benchmark_comparison.get('benchmark_annualized_return', 0):+8.2f}%                              │")
+                print(f"├─────────────────────────────────────────────────────────────────────────────┤")
+                print(f"│ Strategy Max Drawdown:     {summary['max_drawdown']:8.2f}%                              │")
+                print(f"│ Benchmark Max Drawdown:    {benchmark_comparison.get('benchmark_max_drawdown', 0):8.2f}%                              │")
+                print(f"├─────────────────────────────────────────────────────────────────────────────┤")
+                
+                # Handle Sharpe ratio and correlation display based on data availability
+                num_weeks = len(perf_df)
+                if num_weeks > 1:
+                    print(f"│ Strategy Sharpe Ratio:     {summary['sharpe_ratio']:8.2f}                                │")
+                    print(f"│ Benchmark Sharpe Ratio:    {benchmark_comparison.get('benchmark_sharpe_ratio', 0):8.2f}                                │")
+                    print(f"│ Correlation:               {benchmark_comparison.get('correlation', 0):8.3f}                                │")
+                else:
+                    print(f"│ Strategy Sharpe Ratio:     {'N/A':>8} (insufficient data)                   │")
+                    print(f"│ Benchmark Sharpe Ratio:    {'N/A':>8} (insufficient data)                   │")
+                    print(f"│ Correlation:               {'N/A':>8} (insufficient data)                   │")
+                
+                print(f"└─────────────────────────────────────────────────────────────────────────────┘")
         except Exception as e:
             print(f"Warning: Could not calculate benchmark performance: {e}")
     
@@ -1046,9 +1074,26 @@ def export_detailed_report(perf_df: pd.DataFrame, summary: dict, detailed_df: pd
     
     # Export benchmark performance if available
     if benchmark_df is not None and not benchmark_df.empty:
+        # Add strategy data to benchmark export for comparison
+        benchmark_with_strategy = benchmark_df.copy()
+        
+        # Merge strategy performance data with benchmark data
+        if not perf_df.empty:
+            strategy_subset = perf_df[["Date", "Equity_USD", "Weekly_Return_Pct"]].copy()
+            strategy_subset = strategy_subset.rename(columns={
+                "Equity_USD": "Strategy_Portfolio_Value",
+                "Weekly_Return_Pct": "Strategy_Weekly_Return_Pct"
+            })
+            
+            # Merge on Date
+            benchmark_with_strategy = pd.merge(
+                benchmark_with_strategy, strategy_subset, 
+                on="Date", how="left"
+            )
+        
         benchmark_file = REPORTS_DIR / f"benchmark_{timestamp}.csv"
-        benchmark_df.to_csv(benchmark_file, index=False)
-        print(f"Exported benchmark data to {benchmark_file}")
+        benchmark_with_strategy.to_csv(benchmark_file, index=False)
+        print(f"Exported benchmark data (with strategy comparison) to {benchmark_file}")
     
     # Export summary as text file
     summary_file = REPORTS_DIR / f"summary_{timestamp}.txt"
