@@ -38,6 +38,19 @@ BACKTEST_END_DATE = dt.datetime(2025, 5, 1)     # End date for backtesting
 
 # Strategy parameters
 BACKTEST_INITIAL_CAPITAL = 100_000.0  # Starting capital in USD
-BACKTEST_BTC_WEIGHT = 1.3            # Weight of BTC in the portfolio (0-1)
-BACKTEST_ALT_WEIGHT = 0.3            # Weight of alts in the portfolio (0-1)
+BACKTEST_BTC_WEIGHT = 1.75           # Weight of BTC in the portfolio (0-3)
+BACKTEST_ALT_WEIGHT = 0.75           # Weight of alts in the portfolio (0-3)
 BACKTEST_TOP_N_ALTS = 10            # Number of top alts to include in the short basket
+
+# --- Benchmark Configuration ---
+# Available assets for benchmark composition
+BENCHMARK_AVAILABLE_ASSETS = [
+    'BTC', 'ETH', 'BNB', 'SOL', 'ADA', 'XRP', 'DOGE', 'AVAX', 'LINK', 'DOT',
+    'MATIC', 'LTC', 'SHIB', 'TRX', 'ATOM', 'UNI', 'ICP', 'NEAR', 'APT', 'FIL'
+]
+
+# Default benchmark configuration (50% BTC, 50% ETH)
+DEFAULT_BENCHMARK_WEIGHTS = {
+    'BTC': 0.5,
+    'ETH': 0.5
+}
