@@ -536,6 +536,23 @@ if run_backtest:
                         
                         # Detailed comparison metrics
                         st.subheader("Detailed Comparison Metrics")
+                        
+                        # Determine if we have meaningful correlation and Sharpe data
+                        num_weeks = len(perf) if not perf.empty else 0
+                        has_correlation = num_weeks > 1
+                        has_sharpe = num_weeks > 1
+                        
+                        # Format correlation display
+                        if has_correlation:
+                            correlation_str = f"{benchmark_comparison.get('correlation', 0):.3f}"
+                        else:
+                            correlation_str = "N/A (insufficient data)"
+                        
+                        # Format Sharpe ratio display  
+                        strategy_sharpe = f"{summary['sharpe_ratio']:.2f}" if has_sharpe else "N/A"
+                        benchmark_sharpe = f"{benchmark_comparison.get('benchmark_sharpe_ratio', 0):.2f}" if has_sharpe else "N/A"
+                        sharpe_diff = f"{benchmark_comparison.get('strategy_vs_benchmark_sharpe', 0):+.2f}" if has_sharpe else "N/A"
+                        
                         comparison_data = [
                             ["Metric", "Strategy", "Benchmark", "Difference"],
                             ["Total Return", f"{summary['total_return_pct']:+.2f}%", 
@@ -547,15 +564,19 @@ if run_backtest:
                             ["Max Drawdown", f"{summary['max_drawdown']:.2f}%",
                              f"{benchmark_comparison.get('benchmark_max_drawdown', 0):.2f}%",
                              f"{benchmark_comparison.get('strategy_vs_benchmark_drawdown', 0):+.2f}%"],
-                            ["Sharpe Ratio", f"{summary['sharpe_ratio']:.2f}",
-                             f"{benchmark_comparison.get('benchmark_sharpe_ratio', 0):.2f}",
-                             f"{benchmark_comparison.get('strategy_vs_benchmark_sharpe', 0):+.2f}"],
-                            ["Correlation", "—", "—", f"{benchmark_comparison.get('correlation', 0):.3f}"]
+                            ["Sharpe Ratio", strategy_sharpe, benchmark_sharpe, sharpe_diff],
+                            ["Correlation", "—", "—", correlation_str]
                         ]
                         
                         # Display as a clean table
                         comparison_df = pd.DataFrame(comparison_data[1:], columns=comparison_data[0])
                         st.dataframe(comparison_df, hide_index=True, use_container_width=True)
+                        
+                        # Add explanatory note for single-week data
+                        if num_weeks == 1:
+                            st.info("⚠️ **Note**: Single-week backtest data. Sharpe ratio and correlation require more data points for meaningful calculation.")
+                        elif num_weeks < 4:
+                            st.info("⚠️ **Note**: Limited data (<4 weeks). Statistical measures may not be reliable.")
                 
                 # Adjust tab numbers based on whether benchmark is enabled
                 detailed_tab = tab4 if not (use_benchmark and benchmark_weights_final and not benchmark_df.empty) else tab4

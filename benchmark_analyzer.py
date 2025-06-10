@@ -138,7 +138,7 @@ def compare_strategy_vs_benchmark(strategy_perf: pd.DataFrame, benchmark_perf: p
     
     # Find common dates
     common_dates = strategy_aligned.index.intersection(benchmark_aligned.index)
-    if len(common_dates) < 2:
+    if len(common_dates) < 1:
         return {}
     
     strategy_values = strategy_aligned.loc[common_dates]
@@ -157,11 +157,14 @@ def compare_strategy_vs_benchmark(strategy_perf: pd.DataFrame, benchmark_perf: p
     
     # Calculate benchmark Sharpe ratio
     benchmark_sharpe = 0.0
-    if len(benchmark_weekly_returns) > 0:
+    if len(benchmark_weekly_returns) > 1:  # Need at least 2 points for std calculation
         benchmark_ann_return = np.mean(benchmark_weekly_returns) * 52
         benchmark_ann_volatility = np.std(benchmark_weekly_returns) * np.sqrt(52)
         if benchmark_ann_volatility > 0:
             benchmark_sharpe = (benchmark_ann_return - 2.0) / benchmark_ann_volatility  # 2% risk-free rate
+    elif len(benchmark_weekly_returns) == 1:
+        # For single week, Sharpe ratio is not meaningful, set to 0
+        benchmark_sharpe = 0.0
     
     # Calculate correlation
     strategy_returns = strategy_perf["Weekly_Return_Pct"].dropna().values
@@ -174,6 +177,9 @@ def compare_strategy_vs_benchmark(strategy_perf: pd.DataFrame, benchmark_perf: p
             correlation = np.corrcoef(strategy_returns[-min_len:], benchmark_returns_aligned[-min_len:])[0, 1]
             if np.isnan(correlation):
                 correlation = 0.0
+    elif len(strategy_returns) == 1 and len(benchmark_returns_aligned) == 1:
+        # For single week, correlation is not meaningful, set to N/A or 0
+        correlation = 0.0
     
     # Calculate alpha (excess return vs benchmark)
     alpha = strategy_summary.get("annualized_return", 0) - benchmark_annualized_return
