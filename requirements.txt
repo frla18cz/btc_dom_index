@@ -10,3 +10,4 @@ playwright
 tqdm
 streamlit
 tabulate
+beautifulsoup4
