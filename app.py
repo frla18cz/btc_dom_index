@@ -22,6 +22,14 @@ from analyzer_weekly import (
     plot_btc_vs_alts
 )
 
+# Import benchmark functionality
+from benchmark_analyzer import (
+    get_available_assets_from_data,
+    validate_benchmark_weights,
+    plot_strategy_vs_benchmark,
+    plot_rolling_correlation
+)
+
 # Import default configuration
 from config.config import (
     EXCLUDED_SYMBOLS,
@@ -30,7 +38,9 @@ from config.config import (
     BACKTEST_INITIAL_CAPITAL,
     BACKTEST_BTC_WEIGHT,
     BACKTEST_ALT_WEIGHT,
-    BACKTEST_TOP_N_ALTS
+    BACKTEST_TOP_N_ALTS,
+    BENCHMARK_AVAILABLE_ASSETS,
+    DEFAULT_BENCHMARK_WEIGHTS
 )
 
 # Import fetcher functions
@@ -249,6 +259,86 @@ top_n_alts = st.sidebar.slider(
     step=1,
 )
 
+# Benchmark Configuration
+st.sidebar.subheader("📊 Benchmark Configuration")
+
+# Load available assets for benchmark from data if possible
+available_assets = BENCHMARK_AVAILABLE_ASSETS.copy()
+if csv_path.exists():
+    try:
+        sample_df = pd.read_csv(csv_path, nrows=1000)  # Sample to get available assets
+        df_prepared = load_and_prepare(csv_path)
+        if not df_prepared.empty:
+            available_assets = get_available_assets_from_data(df_prepared)
+    except Exception:
+        pass  # Use default assets if data loading fails
+
+# Benchmark weights input
+benchmark_weights = {}
+use_benchmark = st.sidebar.checkbox("Enable Benchmark Comparison", value=False)
+
+if use_benchmark:
+    st.sidebar.write("**Select Assets and Weights:**")
+    
+    # Quick preset buttons
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        if st.button("50/50 BTC/ETH", help="Set 50% BTC, 50% ETH"):
+            st.session_state.benchmark_btc = 50.0
+            st.session_state.benchmark_eth = 50.0
+            for asset in available_assets[2:]:  # Reset others
+                st.session_state[f"benchmark_{asset.lower()}"] = 0.0
+    
+    with col2:
+        if st.button("100% BTC", help="Set 100% BTC"):
+            st.session_state.benchmark_btc = 100.0
+            for asset in available_assets[1:]:  # Reset others
+                st.session_state[f"benchmark_{asset.lower()}"] = 0.0
+    
+    # Individual asset weight sliders
+    total_weight = 0.0
+    for asset in available_assets[:10]:  # Limit to top 10 for UI
+        key = f"benchmark_{asset.lower()}"
+        default_val = DEFAULT_BENCHMARK_WEIGHTS.get(asset, 0.0) * 100
+        
+        weight = st.sidebar.slider(
+            f"{asset} Weight (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=default_val,
+            step=5.0,
+            key=key
+        )
+        
+        if weight > 0:
+            benchmark_weights[asset] = weight / 100.0
+            total_weight += weight
+    
+    # Weight validation
+    if total_weight > 0:
+        if abs(total_weight - 100.0) > 0.1:
+            if total_weight > 100.0:
+                st.sidebar.error(f"❌ Total weight: {total_weight:.1f}% (exceeds 100%)")
+            else:
+                st.sidebar.warning(f"⚠️ Total weight: {total_weight:.1f}% (below 100%)")
+                
+                # Auto-normalize option
+                if st.sidebar.button("📐 Auto-normalize to 100%"):
+                    for asset in benchmark_weights:
+                        key = f"benchmark_{asset.lower()}"
+                        current_val = st.session_state.get(key, 0.0)
+                        st.session_state[key] = (current_val / total_weight) * 100.0
+                    st.rerun()
+        else:
+            st.sidebar.success(f"✅ Total weight: {total_weight:.1f}%")
+            
+        # Show benchmark composition
+        if benchmark_weights:
+            st.sidebar.write("**Benchmark Composition:**")
+            for asset, weight in sorted(benchmark_weights.items(), key=lambda x: x[1], reverse=True):
+                if weight > 0:
+                    st.sidebar.write(f"• {asset}: {weight*100:.1f}%")
+
 # Excluded tokens (advanced option)
 show_advanced = st.sidebar.checkbox("Show Advanced Options")
 excluded_tokens = EXCLUDED_SYMBOLS.copy()
@@ -302,11 +392,21 @@ if run_backtest:
             new_stdout = io.StringIO()
             sys.stdout = new_stdout
             
+            # Validate benchmark weights if benchmark is enabled
+            benchmark_weights_final = None
+            if use_benchmark and benchmark_weights:
+                is_valid, error_msg = validate_benchmark_weights(benchmark_weights)
+                if not is_valid:
+                    st.error(f"❌ Benchmark configuration error: {error_msg}")
+                    st.stop()
+                else:
+                    benchmark_weights_final = benchmark_weights
+            
             # Run backtest
             st.info("Running backtest...")
             progress_bar.progress(50)
             
-            perf, summary, detailed = backtest_rank_altbtc_short(
+            perf, summary, detailed, benchmark_df, benchmark_comparison = backtest_rank_altbtc_short(
                 df,
                 btc_w=btc_weight,
                 alt_w=alt_weight,
@@ -314,6 +414,7 @@ if run_backtest:
                 excluded=excluded_tokens,
                 start_cap=initial_capital,
                 detailed_output=True,
+                benchmark_weights=benchmark_weights_final,
             )
             
             # Restore stdout
@@ -322,8 +423,14 @@ if run_backtest:
             
             # Check if backtest was successful
             if summary:
-                # Create tabs for different views
-                tab1, tab2, tab3, tab4 = st.tabs(["Summary", "Performance Charts", "Detailed Output", "Raw Data"])
+                # Create tabs for different views - add benchmark tab if benchmark is used
+                if use_benchmark and benchmark_weights_final and not benchmark_df.empty:
+                    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+                        "Summary", "Performance Charts", "Benchmark Comparison", 
+                        "Detailed Output", "Raw Data", "Benchmark Data"
+                    ])
+                else:
+                    tab1, tab2, tab3, tab4 = st.tabs(["Summary", "Performance Charts", "Detailed Output", "Raw Data"])
                 
                 with tab1:
                     # Display summary in a nice format
@@ -364,6 +471,33 @@ if run_backtest:
                         st.metric("Win Rate", f"{summary['win_rate']:.1f}%")
                         st.metric("BTC P/L Contribution", f"${summary['cum_btc_pnl']:+,.2f}")
                         st.metric("ALT P/L Contribution", f"${summary['cum_alt_pnl']:+,.2f}")
+                    
+                    # Show benchmark comparison summary if available
+                    if benchmark_comparison:
+                        st.subheader("Benchmark Comparison")
+                        bench_cols = st.columns(3)
+                        
+                        with bench_cols[0]:
+                            st.metric(
+                                "Alpha (Excess Return)",
+                                f"{benchmark_comparison.get('alpha', 0):+.2f}%",
+                                delta=f"{benchmark_comparison.get('strategy_vs_benchmark_total', 0):+.2f}% vs benchmark"
+                            )
+                        
+                        with bench_cols[1]:
+                            st.metric(
+                                "Correlation",
+                                f"{benchmark_comparison.get('correlation', 0):.3f}",
+                                help="Correlation between strategy and benchmark returns (-1 to 1)"
+                            )
+                        
+                        with bench_cols[2]:
+                            benchmark_desc = " + ".join([f"{w*100:.0f}% {s}" for s, w in benchmark_weights_final.items()])
+                            st.metric(
+                                "Benchmark Return",
+                                f"{benchmark_comparison.get('benchmark_total_return', 0):+.2f}%",
+                                delta=benchmark_desc
+                            )
                 
                 with tab2:
                     st.header("Performance Charts")
@@ -380,11 +514,58 @@ if run_backtest:
                     if contrib_fig:
                         st.pyplot(contrib_fig)
                 
-                with tab3:
+                # Add benchmark comparison tab if benchmark is enabled
+                if use_benchmark and benchmark_weights_final and not benchmark_df.empty:
+                    with tab3:
+                        st.header("Benchmark Comparison")
+                        
+                        # Strategy vs Benchmark chart
+                        st.subheader("Strategy vs Benchmark Performance")
+                        comparison_fig = plot_strategy_vs_benchmark(
+                            perf, benchmark_df, summary, benchmark_comparison, 
+                            start_dt, end_dt, benchmark_weights_final
+                        )
+                        if comparison_fig:
+                            st.pyplot(comparison_fig)
+                        
+                        # Rolling correlation chart
+                        st.subheader("Rolling Correlation (12-Week Window)")
+                        correlation_fig = plot_rolling_correlation(perf, benchmark_df, window=12)
+                        if correlation_fig:
+                            st.pyplot(correlation_fig)
+                        
+                        # Detailed comparison metrics
+                        st.subheader("Detailed Comparison Metrics")
+                        comparison_data = [
+                            ["Metric", "Strategy", "Benchmark", "Difference"],
+                            ["Total Return", f"{summary['total_return_pct']:+.2f}%", 
+                             f"{benchmark_comparison.get('benchmark_total_return', 0):+.2f}%",
+                             f"{benchmark_comparison.get('strategy_vs_benchmark_total', 0):+.2f}%"],
+                            ["Annualized Return", f"{summary['annualized_return']:+.2f}%",
+                             f"{benchmark_comparison.get('benchmark_annualized_return', 0):+.2f}%",
+                             f"{benchmark_comparison.get('alpha', 0):+.2f}%"],
+                            ["Max Drawdown", f"{summary['max_drawdown']:.2f}%",
+                             f"{benchmark_comparison.get('benchmark_max_drawdown', 0):.2f}%",
+                             f"{benchmark_comparison.get('strategy_vs_benchmark_drawdown', 0):+.2f}%"],
+                            ["Sharpe Ratio", f"{summary['sharpe_ratio']:.2f}",
+                             f"{benchmark_comparison.get('benchmark_sharpe_ratio', 0):.2f}",
+                             f"{benchmark_comparison.get('strategy_vs_benchmark_sharpe', 0):+.2f}"],
+                            ["Correlation", "—", "—", f"{benchmark_comparison.get('correlation', 0):.3f}"]
+                        ]
+                        
+                        # Display as a clean table
+                        comparison_df = pd.DataFrame(comparison_data[1:], columns=comparison_data[0])
+                        st.dataframe(comparison_df, hide_index=True, use_container_width=True)
+                
+                # Adjust tab numbers based on whether benchmark is enabled
+                detailed_tab = tab4 if not (use_benchmark and benchmark_weights_final and not benchmark_df.empty) else tab4
+                raw_data_tab = tab4 if not (use_benchmark and benchmark_weights_final and not benchmark_df.empty) else tab5
+                
+                with detailed_tab:
                     st.header("Detailed Backtest Output")
                     st.text(new_stdout.getvalue())
                 
-                with tab4:
+                with raw_data_tab:
                     st.header("Raw Data")
                     
                     # Show performance data
@@ -395,6 +576,35 @@ if run_backtest:
                     if not detailed.empty:
                         st.subheader("Detailed Position Data")
                         st.dataframe(detailed)
+                
+                # Add benchmark data tab if benchmark is enabled
+                if use_benchmark and benchmark_weights_final and not benchmark_df.empty:
+                    with tab6:
+                        st.header("Benchmark Data")
+                        
+                        # Show benchmark composition
+                        st.subheader("Benchmark Portfolio Composition")
+                        benchmark_desc = []
+                        for asset, weight in sorted(benchmark_weights_final.items(), key=lambda x: x[1], reverse=True):
+                            benchmark_desc.append(f"• **{asset}**: {weight*100:.1f}%")
+                        st.write("\n".join(benchmark_desc))
+                        
+                        # Show benchmark performance data
+                        st.subheader("Benchmark Performance Data")
+                        st.dataframe(benchmark_df)
+                        
+                        # Summary metrics
+                        if benchmark_comparison:
+                            st.subheader("Benchmark Summary")
+                            benchmark_summary_data = [
+                                ["Metric", "Value"],
+                                ["Total Return", f"{benchmark_comparison.get('benchmark_total_return', 0):+.2f}%"],
+                                ["Annualized Return", f"{benchmark_comparison.get('benchmark_annualized_return', 0):+.2f}%"],
+                                ["Maximum Drawdown", f"{benchmark_comparison.get('benchmark_max_drawdown', 0):.2f}%"],
+                                ["Sharpe Ratio", f"{benchmark_comparison.get('benchmark_sharpe_ratio', 0):.2f}"]
+                            ]
+                            benchmark_summary_df = pd.DataFrame(benchmark_summary_data[1:], columns=benchmark_summary_data[0])
+                            st.dataframe(benchmark_summary_df, hide_index=True, use_container_width=True)
                 
                 progress_bar.progress(100)
                 st.success("Backtest completed successfully!")

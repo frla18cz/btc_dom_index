@@ -20,7 +20,8 @@ from config.config import (
     BACKTEST_INITIAL_CAPITAL,
     BACKTEST_BTC_WEIGHT,
     BACKTEST_ALT_WEIGHT,
-    BACKTEST_TOP_N_ALTS
+    BACKTEST_TOP_N_ALTS,
+    DEFAULT_BENCHMARK_WEIGHTS
 )
 
 # Configuration with defaults from config.py
@@ -165,7 +166,8 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                               top_n: int = TOP_N,
                               excluded: list = None,
                               start_cap: float = START_CAP,
-                              detailed_output: bool = True) -> tuple[pd.DataFrame, dict, pd.DataFrame]:
+                              detailed_output: bool = True,
+                              benchmark_weights: dict = None) -> tuple[pd.DataFrame, dict, pd.DataFrame, pd.DataFrame, dict]:
     """
     Backtest the BTC long vs ALT short strategy.
     
@@ -177,17 +179,22 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         excluded: List of symbols to exclude from the short basket
         start_cap: Initial capital in USD
         detailed_output: Whether to save detailed weekly position data
+        benchmark_weights: Optional dict of benchmark asset weights for comparison
         
     Returns:
-        Tuple of (performance DataFrame, summary dictionary, detailed_positions DataFrame)
+        Tuple of (performance DataFrame, summary dictionary, detailed_positions DataFrame, 
+                 benchmark_performance DataFrame, benchmark_comparison dictionary)
     """
     if excluded is None:
         excluded = EXCLUDED
+    
+    # Import benchmark analyzer functions
+    from benchmark_analyzer import calculate_benchmark_performance, compare_strategy_vs_benchmark
         
     weeks = sorted(df["rebalance_ts"].unique())
     if len(weeks) < 2:
         print("Not enough weeks for backtest")
-        return pd.DataFrame(), {}, pd.DataFrame()
+        return pd.DataFrame(), {}, pd.DataFrame(), pd.DataFrame(), {}
         
     equity = start_cap
 
@@ -782,7 +789,25 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         "win_rate": np.mean(weekly_returns > 0) * 100 if weekly_returns.size > 0 else 0,
     }
     
-    return perf_df, summary, detailed_df
+    # Calculate benchmark performance if benchmark weights provided
+    benchmark_df = pd.DataFrame()
+    benchmark_comparison = {}
+    
+    if benchmark_weights:
+        try:
+            benchmark_df = calculate_benchmark_performance(df, benchmark_weights, start_cap)
+            if not benchmark_df.empty:
+                benchmark_comparison = compare_strategy_vs_benchmark(perf_df, benchmark_df, summary, start_cap)
+                print(f"\n========== BENCHMARK COMPARISON ==========")
+                print(f"Benchmark: {', '.join([f'{w*100:.1f}% {s}' for s, w in benchmark_weights.items() if w > 0])}")
+                print(f"Strategy Total Return: {summary['total_return_pct']:+.2f}%")
+                print(f"Benchmark Total Return: {benchmark_comparison.get('benchmark_total_return', 0):+.2f}%")
+                print(f"Alpha (Excess Return): {benchmark_comparison.get('alpha', 0):+.2f}%")
+                print(f"Correlation: {benchmark_comparison.get('correlation', 0):.3f}")
+        except Exception as e:
+            print(f"Warning: Could not calculate benchmark performance: {e}")
+    
+    return perf_df, summary, detailed_df, benchmark_df, benchmark_comparison
 
 
 def calculate_max_drawdown(perf_df: pd.DataFrame) -> float:
@@ -991,7 +1016,8 @@ def plot_btc_vs_alts(perf_df: pd.DataFrame) -> plt.Figure:
 
 
 def export_detailed_report(perf_df: pd.DataFrame, summary: dict, detailed_df: pd.DataFrame, 
-                         start_date: dt.datetime, end_date: dt.datetime):
+                         start_date: dt.datetime, end_date: dt.datetime,
+                         benchmark_df: pd.DataFrame = None, benchmark_comparison: dict = None):
     """Export detailed backtest report to CSV files and plots."""
     # Create reports directory if it doesn't exist
     REPORTS_DIR.mkdir(exist_ok=True)
@@ -1017,6 +1043,12 @@ def export_detailed_report(perf_df: pd.DataFrame, summary: dict, detailed_df: pd
         detail_file = REPORTS_DIR / f"positions_{timestamp}.csv"
         detailed_df.to_csv(detail_file, index=False)
         print(f"Exported detailed position data to {detail_file}")
+    
+    # Export benchmark performance if available
+    if benchmark_df is not None and not benchmark_df.empty:
+        benchmark_file = REPORTS_DIR / f"benchmark_{timestamp}.csv"
+        benchmark_df.to_csv(benchmark_file, index=False)
+        print(f"Exported benchmark data to {benchmark_file}")
     
     # Export summary as text file
     summary_file = REPORTS_DIR / f"summary_{timestamp}.txt"
@@ -1060,6 +1092,15 @@ def export_detailed_report(perf_df: pd.DataFrame, summary: dict, detailed_df: pd
         f.write(f"Sharpe Ratio:      {summary['sharpe_ratio']:.2f}\n")
         f.write(f"Sortino Ratio:     {summary['sortino_ratio']:.2f}\n")
         f.write(f"Win Rate:          {summary['win_rate']:.1f}%\n")
+        
+        # Add benchmark comparison if available
+        if benchmark_comparison:
+            f.write(f"\nBenchmark Comparison:\n")
+            f.write(f"Benchmark Return:  {benchmark_comparison.get('benchmark_total_return', 0):+.2f}%\n")
+            f.write(f"Alpha (Excess):    {benchmark_comparison.get('alpha', 0):+.2f}%\n")
+            f.write(f"Correlation:       {benchmark_comparison.get('correlation', 0):.3f}\n")
+            f.write(f"Benchmark Sharpe:  {benchmark_comparison.get('benchmark_sharpe_ratio', 0):.2f}\n")
+            f.write(f"Benchmark Max DD:  {benchmark_comparison.get('benchmark_max_drawdown', 0):.2f}%\n")
     
     print(f"Exported summary to {summary_file}")
     
@@ -1075,6 +1116,39 @@ def export_detailed_report(perf_df: pd.DataFrame, summary: dict, detailed_df: pd
         contrib_plot_file = REPORTS_DIR / f"contribution_{timestamp}.png"
         contribution_fig.savefig(contrib_plot_file, dpi=300, bbox_inches="tight")
         print(f"Exported contribution plot to {contrib_plot_file}")
+    
+    # Save benchmark comparison plots if available
+    if benchmark_df is not None and not benchmark_df.empty and benchmark_comparison:
+        from benchmark_analyzer import plot_strategy_vs_benchmark, plot_rolling_correlation
+        
+        # Extract benchmark weights from comparison data (reconstruct from function signature)
+        benchmark_weights_for_plot = {}
+        # Try to extract weights from benchmark_df columns
+        weight_columns = [col for col in benchmark_df.columns if col.endswith('_Weight')]
+        if weight_columns and not benchmark_df.empty:
+            for col in weight_columns:
+                asset = col.replace('_Weight', '')
+                weight = benchmark_df[col].iloc[0] if col in benchmark_df.columns else 0
+                if weight > 0:
+                    benchmark_weights_for_plot[asset] = weight
+        
+        # Strategy vs benchmark comparison plot
+        if benchmark_weights_for_plot:
+            benchmark_comparison_fig = plot_strategy_vs_benchmark(
+                perf_df, benchmark_df, summary, benchmark_comparison, 
+                start_date, end_date, benchmark_weights_for_plot
+            )
+            if benchmark_comparison_fig:
+                benchmark_plot_file = REPORTS_DIR / f"benchmark_comparison_{timestamp}.png"
+                benchmark_comparison_fig.savefig(benchmark_plot_file, dpi=300, bbox_inches="tight")
+                print(f"Exported benchmark comparison plot to {benchmark_plot_file}")
+        
+        # Rolling correlation plot
+        correlation_fig = plot_rolling_correlation(perf_df, benchmark_df, window=12)
+        if correlation_fig:
+            correlation_plot_file = REPORTS_DIR / f"rolling_correlation_{timestamp}.png"
+            correlation_fig.savefig(correlation_plot_file, dpi=300, bbox_inches="tight")
+            print(f"Exported rolling correlation plot to {correlation_plot_file}")
 
 
 def main():
@@ -1089,7 +1163,7 @@ def main():
     print(f"Loaded {len(df)} rows over {df['rebalance_ts'].nunique()} weeks")
     
     # Run backtest
-    perf, summary, detailed = backtest_rank_altbtc_short(df)
+    perf, summary, detailed, benchmark_df, benchmark_comparison = backtest_rank_altbtc_short(df)
     
     # Display summary
     if summary:
@@ -1121,7 +1195,7 @@ def main():
         print("└─────────────────────────────────────────────────────┘")
         
         # Export detailed report
-        export_detailed_report(perf, summary, detailed, START_DATE, END_DATE)
+        export_detailed_report(perf, summary, detailed, START_DATE, END_DATE, benchmark_df, benchmark_comparison)
         
         # Show plots
         equity_fig = plot_equity_curve(perf, summary, START_DATE, END_DATE)
