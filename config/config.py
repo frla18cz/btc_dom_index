@@ -52,8 +52,8 @@ BENCHMARK_AVAILABLE_ASSETS = [
     'MATIC', 'LTC', 'SHIB', 'TRX', 'ATOM', 'UNI', 'ICP', 'NEAR', 'APT', 'FIL'
 ]
 
-# Default benchmark configuration (50% BTC, 50% ETH)
+# Default benchmark configuration (100% BTC)
 DEFAULT_BENCHMARK_WEIGHTS = {
-    'BTC': 0.5,
-    'ETH': 0.5
+    'BTC': 1.0,
+    'ETH': 0.0
 }

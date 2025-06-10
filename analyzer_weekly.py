@@ -189,7 +189,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         excluded = EXCLUDED
     
     # Import benchmark analyzer functions
-    from benchmark_analyzer import calculate_benchmark_performance, compare_strategy_vs_benchmark
+    from benchmark_analyzer import calculate_benchmark_performance, compare_strategy_vs_benchmark, print_benchmark_breakdown
         
     weeks = sorted(df["rebalance_ts"].unique())
     if len(weeks) < 2:
@@ -235,9 +235,13 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         if pd.isna(btc_price0) or btc_price0 == 0:
             raise ValueError("BTC price is NaN or zero")
     except Exception as e:
-        print(f"Error getting initial BTC price: {e}")
+        print(f"ERROR: Cannot get initial BTC price: {e}")
         print("Cannot initialize positions without BTC price.")
-        return pd.DataFrame(), {}, pd.DataFrame()
+        print(f"BTC data available: {'BTC' in w0.index}")
+        if 'BTC' in w0.index:
+            btc_row = w0.loc['BTC']
+            print(f"BTC row data: {btc_row.to_dict()}")
+        return pd.DataFrame(), {}, pd.DataFrame(), pd.DataFrame(), {}
     
     # 1. Calculate initial BTC position
     btc_qty = (btc_w * equity) / btc_price0
@@ -372,8 +376,11 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         except Exception as e:
             print(f"Error getting BTC price: {e}")
             if i == 0:
-                print("Cannot analyze first week without BTC price.")
-                return pd.DataFrame(), {}, pd.DataFrame()
+                print("ERROR: Cannot analyze first week without BTC price.")
+                print(f"BTC data available: {'BTC' in w0.index}")
+                if 'BTC' in w0.index:
+                    print(f"BTC price value: {w0.loc['BTC', 'price_usd'] if 'BTC' in w0.index else 'N/A'}")
+                return pd.DataFrame(), {}, pd.DataFrame(), pd.DataFrame(), {}
             else:
                 print("Using previous BTC price due to missing data.")
                 continue
@@ -832,6 +839,13 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                     print(f"│ Correlation:               {'N/A':>8} (insufficient data)                   │")
                 
                 print(f"└─────────────────────────────────────────────────────────────────────────────┘")
+                
+                # Add detailed benchmark breakdown
+                if len(perf_df) > 0:
+                    start_date = pd.Timestamp(perf_df["Date"].iloc[0]).strftime("%Y-%m-%d")
+                    end_date = pd.Timestamp(perf_df["Date"].iloc[-1]).strftime("%Y-%m-%d")
+                    period_desc = f"{start_date} to {end_date}"
+                    print_benchmark_breakdown(benchmark_df, benchmark_weights, benchmark_comparison, period_desc)
         except Exception as e:
             print(f"Warning: Could not calculate benchmark performance: {e}")
     
@@ -1045,7 +1059,8 @@ def plot_btc_vs_alts(perf_df: pd.DataFrame) -> plt.Figure:
 
 def export_detailed_report(perf_df: pd.DataFrame, summary: dict, detailed_df: pd.DataFrame, 
                          start_date: dt.datetime, end_date: dt.datetime,
-                         benchmark_df: pd.DataFrame = None, benchmark_comparison: dict = None):
+                         benchmark_df: pd.DataFrame = None, benchmark_comparison: dict = None,
+                         benchmark_weights: dict = None):
     """Export detailed backtest report to CSV files and plots."""
     # Create reports directory if it doesn't exist
     REPORTS_DIR.mkdir(exist_ok=True)
@@ -1094,6 +1109,15 @@ def export_detailed_report(perf_df: pd.DataFrame, summary: dict, detailed_df: pd
         benchmark_file = REPORTS_DIR / f"benchmark_{timestamp}.csv"
         benchmark_with_strategy.to_csv(benchmark_file, index=False)
         print(f"Exported benchmark data (with strategy comparison) to {benchmark_file}")
+        
+        # Export detailed benchmark breakdown if benchmark_weights provided
+        if benchmark_weights:
+            from benchmark_analyzer import get_benchmark_breakdown
+            breakdown_df = get_benchmark_breakdown(benchmark_df, benchmark_weights)
+            if not breakdown_df.empty:
+                breakdown_file = REPORTS_DIR / f"benchmark_breakdown_{timestamp}.csv"
+                breakdown_df.to_csv(breakdown_file, index=False)
+                print(f"Exported detailed benchmark breakdown to {breakdown_file}")
     
     # Export summary as text file
     summary_file = REPORTS_DIR / f"summary_{timestamp}.txt"
@@ -1194,6 +1218,11 @@ def export_detailed_report(perf_df: pd.DataFrame, summary: dict, detailed_df: pd
             correlation_plot_file = REPORTS_DIR / f"rolling_correlation_{timestamp}.png"
             correlation_fig.savefig(correlation_plot_file, dpi=300, bbox_inches="tight")
             print(f"Exported rolling correlation plot to {correlation_plot_file}")
+    
+    print(f"\n" + "="*60)
+    print(f"EXPORT COMPLETE - All files saved to {REPORTS_DIR}/")
+    print(f"Timestamp: {timestamp}")
+    print(f"="*60)
 
 
 def main():
@@ -1240,7 +1269,7 @@ def main():
         print("└─────────────────────────────────────────────────────┘")
         
         # Export detailed report
-        export_detailed_report(perf, summary, detailed, START_DATE, END_DATE, benchmark_df, benchmark_comparison)
+        export_detailed_report(perf, summary, detailed, START_DATE, END_DATE, benchmark_df, benchmark_comparison, DEFAULT_BENCHMARK_WEIGHTS)
         
         # Show plots
         equity_fig = plot_equity_curve(perf, summary, START_DATE, END_DATE)
