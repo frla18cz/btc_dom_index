@@ -11,7 +11,10 @@ TOP_N = 50 # Number of top coins to select
 EXCLUDED_SYMBOLS = [
     # Bitcoin and wrapped versions
     'BTC', 'WBTC', 'BTCB',
-    
+    # Tokeny které nejsou na binance
+    'HYPE',
+
+
     # Stablecoins
     'USDT', 'USDC', 'DAI', 'BUSD', 'TUSD', 'USDD', 'USDE', 'USDS', 'FDUSD', 'USDP', 'GUSD', 'USDK',
     'LUSD', 'FRAX', 'sUSD', 'USDN', 'EURC', 'EURT', 'EUROC', 'PYUSD',
