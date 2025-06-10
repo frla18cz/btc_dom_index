@@ -169,40 +169,139 @@ if csv_path.exists():
 # Date range selector with actual data bounds
 st.sidebar.subheader("📅 Backtest Period")
 col1, col2 = st.sidebar.columns(2)
+
+# Handle default values
+default_start_2025 = dt.date(2025, 1, 6)  # First Monday of 2025
+if available_start_date <= default_start_2025 <= available_end_date:
+    config_default_start = default_start_2025
+else:
+    config_default_start = max(BACKTEST_START_DATE.date(), available_start_date)
+
 with col1:
-    # Default start date to first Monday of 2025 if available, otherwise config default
-    default_start_2025 = dt.date(2025, 1, 6)  # First Monday of 2025
-    if available_start_date <= default_start_2025 <= available_end_date:
-        default_start = default_start_2025
-    else:
-        default_start = max(BACKTEST_START_DATE.date(), available_start_date)
+    # Use persisted values if they exist, otherwise use config defaults
+    default_start = st.session_state.get('selected_start_date', config_default_start)
     
     start_date = st.date_input(
         "Start Date",
         value=default_start,
         min_value=available_start_date,
         max_value=available_end_date,
-        help=f"Available data starts from {available_start_date}"
+        help=f"Available data starts from {available_start_date}",
+        key="start_date_widget"
     )
+    
+    # Store the selected value
+    st.session_state.selected_start_date = start_date
+
 with col2:
-    # Default end date to the last available data
+    # Use persisted values if they exist, otherwise use config defaults
+    default_end = st.session_state.get('selected_end_date', available_end_date)
+    
     end_date = st.date_input(
         "End Date",
-        value=available_end_date,  # Always use the last available date
+        value=default_end,
         min_value=available_start_date,
         max_value=available_end_date,
-        help=f"Available data ends on {available_end_date}"
+        help=f"Available data ends on {available_end_date}",
+        key="end_date_widget"
     )
+    
+    # Store the selected value
+    st.session_state.selected_end_date = end_date
+
+# Add a Run Backtest button
+run_backtest = st.sidebar.button("▶️ Run Backtest", type="primary", use_container_width=True)
+
+# Quick date selection buttons
+st.sidebar.write("**Quick Selection:**")
+col1, col2 = st.sidebar.columns(2)
+
+with col1:
+    if st.button("📅 Latest Week", help="Set to most recent Monday → Monday period"):
+        # Find the last available Monday data and set Monday to Monday period
+        if csv_path.exists():
+            try:
+                # Read the data to find available dates
+                temp_df = pd.read_csv(csv_path, usecols=['snapshot_date'])
+                temp_df['snapshot_date'] = pd.to_datetime(temp_df['snapshot_date'])
+                
+                # Get all available dates sorted
+                all_dates = temp_df['snapshot_date'].dt.date.unique()
+                all_dates = sorted(all_dates, reverse=True)
+                
+                # Find the most recent Monday in the data
+                end_monday = None
+                for date in all_dates:
+                    if date.weekday() == 0:  # Monday
+                        end_monday = date
+                        break
+                
+                if end_monday is not None:
+                    # Find the previous Monday (7 days earlier)
+                    start_monday = end_monday - dt.timedelta(days=7)
+                    
+                    # Make sure start_monday is within available data
+                    if start_monday >= available_start_date:
+                        st.session_state.selected_start_date = start_monday
+                        st.session_state.selected_end_date = end_monday
+                        st.rerun()
+                    else:
+                        st.sidebar.warning("Not enough historical data for Monday-to-Monday period")
+                else:
+                    st.sidebar.warning("No Monday data found in dataset")
+            except Exception as e:
+                st.sidebar.error(f"Error accessing data: {e}")
+        else:
+            st.sidebar.warning("No data file found")
+
+with col2:
+    if st.button("📊 Last Month", help="Set to last 4 weeks"):
+        end_date_month = available_end_date
+        start_date_month = end_date_month - dt.timedelta(days=28)  # 4 weeks
+        
+        # Make sure start date is within available range
+        if start_date_month >= available_start_date:
+            st.session_state.selected_start_date = start_date_month
+            st.session_state.selected_end_date = end_date_month
+            st.rerun()
+        else:
+            st.sidebar.warning("Not enough historical data for 4-week period")
+
 
 # Check if the selected date range is valid
 if start_date >= end_date:
     st.sidebar.error("❌ End date must be after start date")
 
-# Show selected period length
+# Show selected period length with actual snapshot count
 if start_date < end_date:
     period_days = (end_date - start_date).days
     period_weeks = period_days // 7
-    st.sidebar.info(f"📊 Selected period: {period_days} days (~{period_weeks} weeks)")
+    
+    # If we have data, calculate actual snapshot count in the selected range
+    if csv_path.exists():
+        try:
+            temp_df = pd.read_csv(csv_path, usecols=['snapshot_date'])
+            temp_df['snapshot_date'] = pd.to_datetime(temp_df['snapshot_date'])
+            
+            # Filter for selected date range
+            start_dt = pd.Timestamp(start_date)
+            end_dt = pd.Timestamp(end_date)
+            filtered = temp_df[
+                (temp_df['snapshot_date'] >= start_dt) & 
+                (temp_df['snapshot_date'] <= end_dt)
+            ]
+            
+            actual_snapshots = len(filtered['snapshot_date'].unique())
+            if actual_snapshots > 0:
+                st.sidebar.info(f"📊 Selected period: {period_days} days | {actual_snapshots} actual snapshots")
+                if actual_snapshots == 1:
+                    st.sidebar.warning("⚠️ Single snapshot selected - limited statistical analysis")
+            else:
+                st.sidebar.warning(f"⚠️ No data available for {start_date} to {end_date}")
+        except Exception:
+            st.sidebar.info(f"📊 Selected period: {period_days} days (~{period_weeks} weeks)")
+    else:
+        st.sidebar.info(f"📊 Selected period: {period_days} days (~{period_weeks} weeks)")
 
 # Warning if no data file exists
 if not csv_path.exists():
@@ -275,7 +374,7 @@ if csv_path.exists():
 
 # Benchmark weights input
 benchmark_weights = {}
-use_benchmark = st.sidebar.checkbox("Enable Benchmark Comparison", value=False)
+use_benchmark = st.sidebar.checkbox("Enable Benchmark Comparison", value=True)
 
 if use_benchmark:
     st.sidebar.write("**Select Assets and Weights:**")
@@ -283,16 +382,16 @@ if use_benchmark:
     # Quick preset buttons
     col1, col2 = st.sidebar.columns(2)
     with col1:
-        if st.button("50/50 BTC/ETH", help="Set 50% BTC, 50% ETH"):
-            st.session_state.benchmark_btc = 50.0
-            st.session_state.benchmark_eth = 50.0
-            for asset in available_assets[2:]:  # Reset others
+        if st.button("💰 100% BTC", help="Set 100% BTC (default)", type="primary"):
+            st.session_state.benchmark_btc = 100.0
+            for asset in available_assets[1:]:  # Reset others
                 st.session_state[f"benchmark_{asset.lower()}"] = 0.0
     
     with col2:
-        if st.button("100% BTC", help="Set 100% BTC"):
-            st.session_state.benchmark_btc = 100.0
-            for asset in available_assets[1:]:  # Reset others
+        if st.button("⚖️ 50/50 BTC/ETH", help="Set 50% BTC, 50% ETH"):
+            st.session_state.benchmark_btc = 50.0
+            st.session_state.benchmark_eth = 50.0
+            for asset in available_assets[2:]:  # Reset others
                 st.session_state[f"benchmark_{asset.lower()}"] = 0.0
     
     # Individual asset weight sliders
@@ -354,8 +453,6 @@ if show_advanced:
     )
     excluded_tokens = [token.strip() for token in excluded_tokens_input.split(",") if token.strip()]
 
-# Add a Run Backtest button
-run_backtest = st.sidebar.button("Run Backtest", type="primary")
 
 # Main area for displaying results
 if run_backtest:
@@ -385,7 +482,15 @@ if run_backtest:
             actual_start = df['rebalance_ts'].min().date()
             actual_end = df['rebalance_ts'].max().date()
             weeks_count = df['rebalance_ts'].nunique()
-            st.success(f"✅ Loaded {len(df)} rows over {weeks_count} weeks ({actual_start} to {actual_end})")
+            
+            # Calculate the analysis period more accurately
+            if weeks_count >= 2:
+                analysis_periods = weeks_count - 1  # Number of week-to-week transitions analyzed
+                st.success(f"✅ Loaded {len(df)} rows over {weeks_count} snapshots ({actual_start} to {actual_end})")
+                st.info(f"📈 Analysis covers {analysis_periods} weekly transitions for performance calculation")
+            else:
+                st.success(f"✅ Loaded {len(df)} rows over {weeks_count} snapshots ({actual_start} to {actual_end})")
+                st.warning("⚠️ Single snapshot - no performance analysis possible")
             
             # Capture stdout to get the backtest output
             old_stdout = sys.stdout
@@ -587,45 +692,437 @@ if run_backtest:
                     st.text(new_stdout.getvalue())
                 
                 with raw_data_tab:
-                    st.header("Raw Data")
+                    st.header("Raw Data & Analytics")
                     
-                    # Show performance data
-                    st.subheader("Performance Data")
-                    st.dataframe(perf)
+                    # Create sub-tabs for different types of raw data
+                    raw_tab1, raw_tab2, raw_tab3, raw_tab4 = st.tabs([
+                        "Strategy Performance", "Position Details", "Weekly Analysis", "Data Quality"
+                    ])
                     
-                    # Show detailed position data
-                    if not detailed.empty:
-                        st.subheader("Detailed Position Data")
-                        st.dataframe(detailed)
+                    with raw_tab1:
+                        st.subheader("Strategy Performance Data")
+                        
+                        # Enhanced performance metrics
+                        if not perf.empty:
+                            # Show key summary first
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                st.metric("Total Snapshots", len(perf) + 1)  # +1 for initial
+                            with col2:
+                                analysis_periods = len(perf) if not perf.empty else 0
+                                st.metric("Analysis Periods", analysis_periods)
+                            with col3:
+                                if "Weekly_Return_Pct" in perf.columns:
+                                    avg_weekly = perf["Weekly_Return_Pct"].mean()
+                                    st.metric("Avg Weekly Return", f"{avg_weekly:.2f}%")
+                            with col4:
+                                if "Weekly_Return_Pct" in perf.columns:
+                                    volatility = perf["Weekly_Return_Pct"].std()
+                                    st.metric("Weekly Volatility", f"{volatility:.2f}%")
+                            
+                            # Performance data table with enhanced display options
+                            st.write("**Performance Data Table:**")
+                            
+                            # Add data filtering options
+                            show_all_cols = st.checkbox("Show all columns", value=False)
+                            
+                            if show_all_cols:
+                                display_df = perf
+                            else:
+                                # Show key columns by default
+                                key_cols = ["Date", "Equity_USD", "BTC_Price_USD", "Weekly_Return_Pct", 
+                                           "Weekly_BTC_PNL_USD", "Weekly_ALT_PNL_USD"]
+                                available_cols = [col for col in key_cols if col in perf.columns]
+                                display_df = perf[available_cols]
+                            
+                            st.dataframe(display_df, use_container_width=True)
+                            
+                            # Download button for performance data
+                            csv_perf = perf.to_csv(index=False)
+                            st.download_button(
+                                label="📥 Download Performance CSV",
+                                data=csv_perf,
+                                file_name=f"strategy_performance_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                mime="text/csv"
+                            )
+                    
+                    with raw_tab2:
+                        st.subheader("Position Details")
+                        
+                        if not detailed.empty:
+                            # Position analysis
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                total_positions = len(detailed)
+                                st.metric("Total Position Records", total_positions)
+                            with col2:
+                                unique_assets = detailed["Symbol"].nunique() if "Symbol" in detailed.columns else 0
+                                st.metric("Unique Assets", unique_assets)
+                            with col3:
+                                if "Type" in detailed.columns:
+                                    position_types = detailed["Type"].value_counts().to_dict()
+                                    types_str = ", ".join([f"{k}: {v}" for k, v in position_types.items()])
+                                    st.metric("Position Types", len(position_types))
+                                    st.caption(types_str)
+                            
+                            # Position filtering
+                            if "Symbol" in detailed.columns:
+                                selected_symbols = st.multiselect(
+                                    "Filter by Asset",
+                                    options=sorted(detailed["Symbol"].unique()),
+                                    default=[]
+                                )
+                                
+                                if selected_symbols:
+                                    filtered_detailed = detailed[detailed["Symbol"].isin(selected_symbols)]
+                                else:
+                                    filtered_detailed = detailed
+                            else:
+                                filtered_detailed = detailed
+                            
+                            st.dataframe(filtered_detailed, use_container_width=True)
+                            
+                            # Position summary by asset
+                            if "Symbol" in detailed.columns and "PnL_USD" in detailed.columns:
+                                st.write("**Position Summary by Asset:**")
+                                position_summary = detailed.groupby(["Symbol", "Type"]).agg({
+                                    "PnL_USD": ["sum", "mean", "count"],
+                                    "Value_USD": ["mean", "max"] if "Value_USD" in detailed.columns else ["count"]
+                                }).round(2)
+                                
+                                # Flatten column names
+                                position_summary.columns = ['_'.join(col).strip() for col in position_summary.columns.values]
+                                position_summary = position_summary.reset_index()
+                                
+                                st.dataframe(position_summary, use_container_width=True)
+                            
+                            # Download button for position data
+                            csv_detailed = detailed.to_csv(index=False)
+                            st.download_button(
+                                label="📥 Download Position Details CSV",
+                                data=csv_detailed,
+                                file_name=f"position_details_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                mime="text/csv"
+                            )
+                        else:
+                            st.info("No detailed position data available.")
+                    
+                    with raw_tab3:
+                        st.subheader("Weekly Analysis")
+                        
+                        if not perf.empty and "Weekly_Return_Pct" in perf.columns:
+                            # Weekly return statistics
+                            returns = perf["Weekly_Return_Pct"].dropna()
+                            
+                            if len(returns) > 0:
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    st.write("**Return Statistics:**")
+                                    stats_data = {
+                                        "Metric": ["Mean", "Median", "Std Dev", "Min", "Max", "Skewness", "Kurtosis"],
+                                        "Value": [
+                                            f"{returns.mean():.2f}%",
+                                            f"{returns.median():.2f}%",
+                                            f"{returns.std():.2f}%",
+                                            f"{returns.min():.2f}%",
+                                            f"{returns.max():.2f}%",
+                                            f"{returns.skew():.2f}",
+                                            f"{returns.kurtosis():.2f}"
+                                        ]
+                                    }
+                                    st.dataframe(pd.DataFrame(stats_data), hide_index=True)
+                                
+                                with col2:
+                                    st.write("**Performance Buckets:**")
+                                    positive_weeks = (returns > 0).sum()
+                                    negative_weeks = (returns < 0).sum()
+                                    flat_weeks = (returns == 0).sum()
+                                    
+                                    performance_buckets = pd.DataFrame({
+                                        "Outcome": ["Positive", "Negative", "Flat"],
+                                        "Weeks": [positive_weeks, negative_weeks, flat_weeks],
+                                        "Percentage": [
+                                            f"{positive_weeks/len(returns)*100:.1f}%",
+                                            f"{negative_weeks/len(returns)*100:.1f}%",
+                                            f"{flat_weeks/len(returns)*100:.1f}%"
+                                        ]
+                                    })
+                                    st.dataframe(performance_buckets, hide_index=True)
+                                
+                                # Return distribution
+                                st.write("**Weekly Return Distribution:**")
+                                
+                                import matplotlib.pyplot as plt
+                                fig, ax = plt.subplots(figsize=(10, 4))
+                                
+                                # Histogram
+                                ax.hist(returns, bins=20, alpha=0.7, color='blue', edgecolor='black')
+                                ax.axvline(returns.mean(), color='red', linestyle='--', 
+                                          label=f'Mean: {returns.mean():.2f}%')
+                                ax.axvline(returns.median(), color='green', linestyle='--', 
+                                          label=f'Median: {returns.median():.2f}%')
+                                
+                                ax.set_xlabel('Weekly Return (%)')
+                                ax.set_ylabel('Frequency')
+                                ax.set_title('Distribution of Weekly Returns')
+                                ax.legend()
+                                ax.grid(True, alpha=0.3)
+                                
+                                st.pyplot(fig)
+                        else:
+                            st.info("No weekly return data available for analysis.")
+                    
+                    with raw_tab4:
+                        st.subheader("Data Quality & Validation")
+                        
+                        # Data quality checks
+                        st.write("**Data Quality Report:**")
+                        
+                        quality_checks = []
+                        
+                        # Performance data checks
+                        if not perf.empty:
+                            quality_checks.append(["Performance Data", "✅ Available", f"{len(perf)} records"])
+                            
+                            # Check for missing values
+                            missing_counts = perf.isnull().sum()
+                            critical_cols = ["Date", "Equity_USD", "BTC_Price_USD"]
+                            missing_critical = missing_counts[missing_counts.index.intersection(critical_cols)]
+                            
+                            if missing_critical.sum() > 0:
+                                quality_checks.append(["Missing Critical Data", "⚠️ Issues Found", f"{missing_critical.sum()} missing values"])
+                            else:
+                                quality_checks.append(["Missing Critical Data", "✅ Clean", "No missing critical values"])
+                            
+                            # Check for date continuity
+                            if "Date" in perf.columns:
+                                dates = pd.to_datetime(perf["Date"]).sort_values()
+                                date_gaps = dates.diff().dt.days
+                                large_gaps = (date_gaps > 14).sum()  # More than 2 weeks
+                                
+                                if large_gaps > 0:
+                                    quality_checks.append(["Date Continuity", "⚠️ Gaps Found", f"{large_gaps} gaps > 2 weeks"])
+                                else:
+                                    quality_checks.append(["Date Continuity", "✅ Continuous", "No significant gaps"])
+                        else:
+                            quality_checks.append(["Performance Data", "❌ Missing", "No performance data"])
+                        
+                        # Position data checks
+                        if not detailed.empty:
+                            quality_checks.append(["Position Data", "✅ Available", f"{len(detailed)} records"])
+                            
+                            # Check for zero or negative values where they shouldn't be
+                            if "Value_USD" in detailed.columns:
+                                negative_values = (detailed["Value_USD"] < 0).sum()
+                                zero_values = (detailed["Value_USD"] == 0).sum()
+                                
+                                if negative_values > 0:
+                                    quality_checks.append(["Position Values", "⚠️ Issues", f"{negative_values} negative values"])
+                                elif zero_values > 0:
+                                    quality_checks.append(["Position Values", "⚠️ Zero Values", f"{zero_values} zero values"])
+                                else:
+                                    quality_checks.append(["Position Values", "✅ Valid", "All positive values"])
+                        else:
+                            quality_checks.append(["Position Data", "❌ Missing", "No position data"])
+                        
+                        # Period alignment check
+                        if not perf.empty:
+                            snapshots = len(perf) + 1  # +1 for initial snapshot
+                            analysis_periods = len(perf)
+                            expected_periods = snapshots - 1
+                            
+                            if analysis_periods == expected_periods:
+                                quality_checks.append(["Period Alignment", "✅ Correct", f"{analysis_periods} analysis periods from {snapshots} snapshots"])
+                            else:
+                                quality_checks.append(["Period Alignment", "⚠️ Mismatch", f"{analysis_periods} periods vs {expected_periods} expected"])
+                        
+                        # Display quality report
+                        quality_df = pd.DataFrame(quality_checks, columns=["Check", "Status", "Details"])
+                        st.dataframe(quality_df, hide_index=True, use_container_width=True)
+                        
+                        # Raw data configuration summary
+                        st.write("**Configuration Summary:**")
+                        config_data = [
+                            ["Initial Capital", f"${initial_capital:,.2f}"],
+                            ["BTC Weight", f"{btc_weight:.1%}"],
+                            ["ALT Weight", f"{alt_weight:.1%}"],
+                            ["Total Leverage", f"{btc_weight + alt_weight:.2f}x"],
+                            ["ALT Basket Size", f"{top_n_alts} assets"],
+                            ["Date Range", f"{start_date} to {end_date}"],
+                            ["Excluded Tokens", f"{len(excluded_tokens)} excluded"]
+                        ]
+                        config_df = pd.DataFrame(config_data, columns=["Parameter", "Value"])
+                        st.dataframe(config_df, hide_index=True, use_container_width=True)
                 
                 # Add benchmark data tab if benchmark is enabled
                 if use_benchmark and benchmark_weights_final and not benchmark_df.empty:
                     with tab6:
-                        st.header("Benchmark Data")
+                        st.header("Benchmark Data & Analysis")
                         
-                        # Show benchmark composition
-                        st.subheader("Benchmark Portfolio Composition")
-                        benchmark_desc = []
-                        for asset, weight in sorted(benchmark_weights_final.items(), key=lambda x: x[1], reverse=True):
-                            benchmark_desc.append(f"• **{asset}**: {weight*100:.1f}%")
-                        st.write("\n".join(benchmark_desc))
+                        # Create benchmark sub-tabs
+                        bench_tab1, bench_tab2, bench_tab3 = st.tabs([
+                            "Portfolio Composition", "Performance Data", "Asset Breakdown"
+                        ])
                         
-                        # Show benchmark performance data
-                        st.subheader("Benchmark Performance Data")
-                        st.dataframe(benchmark_df)
+                        with bench_tab1:
+                            st.subheader("Benchmark Portfolio Composition")
+                            
+                            # Show composition as metrics
+                            st.write("**Asset Allocation:**")
+                            benchmark_cols = st.columns(min(len(benchmark_weights_final), 4))
+                            
+                            for i, (asset, weight) in enumerate(sorted(benchmark_weights_final.items(), key=lambda x: x[1], reverse=True)):
+                                col_idx = i % len(benchmark_cols)
+                                with benchmark_cols[col_idx]:
+                                    st.metric(asset, f"{weight*100:.1f}%")
+                            
+                            # Total allocation check
+                            total_weight = sum(benchmark_weights_final.values())
+                            if abs(total_weight - 1.0) > 0.001:
+                                st.warning(f"⚠️ Total allocation: {total_weight*100:.1f}% (should be 100%)")
+                            else:
+                                st.success(f"✅ Total allocation: {total_weight*100:.1f}%")
+                            
+                            # Benchmark summary metrics
+                            if benchmark_comparison:
+                                st.write("**Benchmark Performance Summary:**")
+                                bench_summary_cols = st.columns(3)
+                                
+                                with bench_summary_cols[0]:
+                                    st.metric("Total Return", f"{benchmark_comparison.get('benchmark_total_return', 0):+.2f}%")
+                                with bench_summary_cols[1]:
+                                    st.metric("Annualized Return", f"{benchmark_comparison.get('benchmark_annualized_return', 0):+.2f}%")
+                                with bench_summary_cols[2]:
+                                    st.metric("Max Drawdown", f"{benchmark_comparison.get('benchmark_max_drawdown', 0):.2f}%")
                         
-                        # Summary metrics
-                        if benchmark_comparison:
-                            st.subheader("Benchmark Summary")
-                            benchmark_summary_data = [
-                                ["Metric", "Value"],
-                                ["Total Return", f"{benchmark_comparison.get('benchmark_total_return', 0):+.2f}%"],
-                                ["Annualized Return", f"{benchmark_comparison.get('benchmark_annualized_return', 0):+.2f}%"],
-                                ["Maximum Drawdown", f"{benchmark_comparison.get('benchmark_max_drawdown', 0):.2f}%"],
-                                ["Sharpe Ratio", f"{benchmark_comparison.get('benchmark_sharpe_ratio', 0):.2f}"]
-                            ]
-                            benchmark_summary_df = pd.DataFrame(benchmark_summary_data[1:], columns=benchmark_summary_data[0])
-                            st.dataframe(benchmark_summary_df, hide_index=True, use_container_width=True)
+                        with bench_tab2:
+                            st.subheader("Benchmark Performance Data")
+                            
+                            # Performance overview
+                            if not benchmark_df.empty:
+                                bench_periods = len(benchmark_df)
+                                analysis_periods_bench = bench_periods - 1 if bench_periods > 1 else 0
+                                
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    st.metric("Total Snapshots", bench_periods)
+                                with col2:
+                                    st.metric("Analysis Periods", analysis_periods_bench)
+                                with col3:
+                                    if "Weekly_Return_Pct" in benchmark_df.columns:
+                                        avg_weekly_bench = benchmark_df["Weekly_Return_Pct"].mean()
+                                        st.metric("Avg Weekly Return", f"{avg_weekly_bench:.2f}%")
+                                
+                                # Show full benchmark data with filtering options
+                                show_all_bench_cols = st.checkbox("Show all benchmark columns", value=False)
+                                
+                                if show_all_bench_cols:
+                                    display_benchmark_df = benchmark_df
+                                else:
+                                    # Show key columns
+                                    key_bench_cols = ["Date", "Portfolio_Value", "Weekly_Return_Pct", "Period_Number"]
+                                    available_bench_cols = [col for col in key_bench_cols if col in benchmark_df.columns]
+                                    
+                                    # Add asset value columns
+                                    asset_value_cols = [col for col in benchmark_df.columns if col.endswith('_Value')]
+                                    available_bench_cols.extend(asset_value_cols[:5])  # Show up to 5 asset values
+                                    
+                                    # Remove duplicates while preserving order
+                                    unique_bench_cols = []
+                                    for col in available_bench_cols:
+                                        if col not in unique_bench_cols:
+                                            unique_bench_cols.append(col)
+                                    
+                                    display_benchmark_df = benchmark_df[unique_bench_cols]
+                                
+                                st.dataframe(display_benchmark_df, use_container_width=True)
+                                
+                                # Download benchmark data
+                                csv_benchmark = benchmark_df.to_csv(index=False)
+                                st.download_button(
+                                    label="📥 Download Benchmark CSV",
+                                    data=csv_benchmark,
+                                    file_name=f"benchmark_data_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                    mime="text/csv"
+                                )
+                        
+                        with bench_tab3:
+                            st.subheader("Asset-Level Breakdown")
+                            
+                            # Generate detailed asset breakdown
+                            try:
+                                from benchmark_analyzer import get_benchmark_breakdown
+                                
+                                breakdown_df = get_benchmark_breakdown(benchmark_df, benchmark_weights_final)
+                                
+                                if not breakdown_df.empty:
+                                    st.write("**Individual Asset Performance:**")
+                                    
+                                    # Display breakdown table
+                                    st.dataframe(breakdown_df, use_container_width=True)
+                                    
+                                    # Asset performance chart
+                                    if "Total_Return_Pct" in breakdown_df.columns:
+                                        st.write("**Asset Return Comparison:**")
+                                        
+                                        fig, ax = plt.subplots(figsize=(10, 6))
+                                        
+                                        assets = breakdown_df["Asset"]
+                                        returns = breakdown_df["Total_Return_Pct"]
+                                        
+                                        colors = ['green' if r >= 0 else 'red' for r in returns]
+                                        bars = ax.bar(assets, returns, color=colors, alpha=0.7)
+                                        
+                                        ax.axhline(0, color='black', linestyle='-', linewidth=0.5)
+                                        ax.set_ylabel('Total Return (%)')
+                                        ax.set_title('Asset Performance in Benchmark Portfolio')
+                                        ax.tick_params(axis='x', rotation=45)
+                                        
+                                        # Add value labels on bars
+                                        for bar, return_val in zip(bars, returns):
+                                            height = bar.get_height()
+                                            ax.text(bar.get_x() + bar.get_width()/2., height + (0.5 if height >= 0 else -1.5),
+                                                   f'{return_val:.1f}%', ha='center', va='bottom' if height >= 0 else 'top')
+                                        
+                                        plt.tight_layout()
+                                        st.pyplot(fig)
+                                    
+                                    # Top/bottom performers
+                                    if "Total_Return_Pct" in breakdown_df.columns and len(breakdown_df) > 1:
+                                        sorted_breakdown = breakdown_df.sort_values("Total_Return_Pct", ascending=False)
+                                        
+                                        col1, col2 = st.columns(2)
+                                        
+                                        with col1:
+                                            st.write("**🏆 Best Performer:**")
+                                            best = sorted_breakdown.iloc[0]
+                                            st.write(f"• **{best['Asset']}**: {best['Total_Return_Pct']:+.2f}%")
+                                            st.write(f"• Contribution: ${best['Contribution_To_Portfolio']:+,.2f}")
+                                            st.write(f"• Weight: {best['Target_Weight_Pct']:.1f}%")
+                                        
+                                        with col2:
+                                            st.write("**📉 Worst Performer:**")
+                                            worst = sorted_breakdown.iloc[-1]
+                                            st.write(f"• **{worst['Asset']}**: {worst['Total_Return_Pct']:+.2f}%")
+                                            st.write(f"• Contribution: ${worst['Contribution_To_Portfolio']:+,.2f}")
+                                            st.write(f"• Weight: {worst['Target_Weight_Pct']:.1f}%")
+                                    
+                                    # Download breakdown data
+                                    csv_breakdown = breakdown_df.to_csv(index=False)
+                                    st.download_button(
+                                        label="📥 Download Asset Breakdown CSV",
+                                        data=csv_breakdown,
+                                        file_name=f"benchmark_breakdown_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                        mime="text/csv"
+                                    )
+                                else:
+                                    st.info("No asset breakdown data available.")
+                            
+                            except ImportError:
+                                st.error("Asset breakdown functionality not available.")
+                            except Exception as e:
+                                st.error(f"Error generating asset breakdown: {e}")
                 
                 progress_bar.progress(100)
                 st.success("Backtest completed successfully!")

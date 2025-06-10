@@ -1,0 +1,25 @@
+Backtest Summary: 2025-06-02 to 2025-06-09
+Strategy: 173.5% BTC long + 75.0% ALT short (Top 10)
+Total Leverage: 2.48x
+
+Contribution Analysis:
+BTC Long P/L:      $+7,293.05
+ALT Short P/L:     $-2,195.54
+Total P/L:         $+5,097.52
+
+Performance Metrics:
+Initial Capital:   $100,000.00
+Final Equity:      $105,097.52
+Total Return:      +5.10%
+Annualized Return: +265.07%
+Maximum Drawdown:  0.00%
+Sharpe Ratio:      0.00
+Sortino Ratio:     inf
+Win Rate:          100.0%
+
+Benchmark Comparison:
+Benchmark Return:  +3.51%
+Alpha (Excess):    +82.50%
+Correlation:       0.000
+Benchmark Sharpe:  7.05
+Benchmark Max DD:  0.00%
