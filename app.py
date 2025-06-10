@@ -60,26 +60,59 @@ The strategy implements weekly rebalancing to maintain target weights and suppor
 # Sidebar configuration
 st.sidebar.header("Strategy Configuration")
 
-# Date range selector with defaults from config
+# Load data to determine available date range
+csv_path = Path("top100_weekly_data.csv")
+available_start_date = dt.date(2021, 1, 1)
+available_end_date = dt.date.today()
+
+if csv_path.exists():
+    try:
+        # Read just the date column to determine range
+        df_dates = pd.read_csv(csv_path, usecols=['snapshot_date'])
+        df_dates['snapshot_date'] = pd.to_datetime(df_dates['snapshot_date'])
+        available_start_date = df_dates['snapshot_date'].min().date()
+        available_end_date = df_dates['snapshot_date'].max().date()
+        
+        # Show available data range
+        st.sidebar.success(f"📊 **Available Data Range:**\n{available_start_date} to {available_end_date}")
+        st.sidebar.info(f"Total snapshots: {len(df_dates)}")
+    except Exception as e:
+        st.sidebar.warning(f"Could not read data file: {e}")
+
+# Date range selector with actual data bounds
+st.sidebar.subheader("📅 Backtest Period")
 col1, col2 = st.sidebar.columns(2)
 with col1:
     start_date = st.date_input(
         "Start Date",
-        value=BACKTEST_START_DATE,
-        min_value=dt.datetime(2021, 1, 1),
-        max_value=dt.datetime.now(),
+        value=max(BACKTEST_START_DATE.date(), available_start_date),
+        min_value=available_start_date,
+        max_value=available_end_date,
+        help=f"Available data starts from {available_start_date}"
     )
 with col2:
     end_date = st.date_input(
         "End Date",
-        value=BACKTEST_END_DATE,
-        min_value=dt.datetime(2021, 1, 1),
-        max_value=dt.datetime.now(),
+        value=min(BACKTEST_END_DATE.date(), available_end_date),
+        min_value=available_start_date,
+        max_value=available_end_date,
+        help=f"Available data ends on {available_end_date}"
     )
 
 # Check if the selected date range is valid
 if start_date >= end_date:
-    st.sidebar.error("End date must be after start date")
+    st.sidebar.error("❌ End date must be after start date")
+
+# Show selected period length
+if start_date < end_date:
+    period_days = (end_date - start_date).days
+    period_weeks = period_days // 7
+    st.sidebar.info(f"📊 Selected period: {period_days} days (~{period_weeks} weeks)")
+
+# Warning if no data file exists
+if not csv_path.exists():
+    st.sidebar.error("❌ **Data file not found!**")
+    st.sidebar.info("Run `python fetcher.py` to download data first.")
 
 # Initial capital input
 initial_capital = st.sidebar.number_input(
@@ -152,7 +185,7 @@ run_backtest = st.sidebar.button("Run Backtest", type="primary")
 # Main area for displaying results
 if run_backtest:
     # Show progress while loading and preparing data
-    csv_path = Path("top100_weekly_2021-2025.csv")
+    csv_path = Path("top100_weekly_data.csv")
     
     if not csv_path.exists():
         st.error(f"Error: Data file not found at {csv_path}")
@@ -170,9 +203,14 @@ if run_backtest:
         progress_bar.progress(30)
         
         if df.empty:
-            st.error("No data available for the selected date range.")
+            st.error("❌ No data available for the selected date range.")
+            st.warning(f"Selected range: {start_date} to {end_date}")
+            st.info("Try selecting dates within the available data range shown in the sidebar.")
         else:
-            st.success(f"Loaded {len(df)} rows over {df['rebalance_ts'].nunique()} weeks")
+            actual_start = df['rebalance_ts'].min().date()
+            actual_end = df['rebalance_ts'].max().date()
+            weeks_count = df['rebalance_ts'].nunique()
+            st.success(f"✅ Loaded {len(df)} rows over {weeks_count} weeks ({actual_start} to {actual_end})")
             
             # Capture stdout to get the backtest output
             old_stdout = sys.stdout
