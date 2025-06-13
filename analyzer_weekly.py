@@ -21,7 +21,8 @@ from config.config import (
     BACKTEST_BTC_WEIGHT,
     BACKTEST_ALT_WEIGHT,
     BACKTEST_TOP_N_ALTS,
-    DEFAULT_BENCHMARK_WEIGHTS
+    DEFAULT_BENCHMARK_WEIGHTS,
+    BENCHMARK_REBALANCE_WEEKLY
 )
 
 # Configuration with defaults from config.py
@@ -167,7 +168,8 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                               excluded: list = None,
                               start_cap: float = START_CAP,
                               detailed_output: bool = True,
-                              benchmark_weights: dict = None) -> tuple[pd.DataFrame, dict, pd.DataFrame, pd.DataFrame, dict]:
+                              benchmark_weights: dict = None,
+                              benchmark_rebalance_weekly: bool = None) -> tuple[pd.DataFrame, dict, pd.DataFrame, pd.DataFrame, dict]:
     """
     Backtest the BTC long vs ALT short strategy.
     
@@ -180,6 +182,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         start_cap: Initial capital in USD
         detailed_output: Whether to save detailed weekly position data
         benchmark_weights: Optional dict of benchmark asset weights for comparison
+        benchmark_rebalance_weekly: If True, benchmark rebalances weekly; if False, buy-and-hold; if None, use config default
         
     Returns:
         Tuple of (performance DataFrame, summary dictionary, detailed_positions DataFrame, 
@@ -802,7 +805,9 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
     
     if benchmark_weights:
         try:
-            benchmark_df = calculate_benchmark_performance(df, benchmark_weights, start_cap)
+            # Use provided parameter or fall back to config default
+            rebalance_weekly = benchmark_rebalance_weekly if benchmark_rebalance_weekly is not None else BENCHMARK_REBALANCE_WEEKLY
+            benchmark_df = calculate_benchmark_performance(df, benchmark_weights, start_cap, rebalance_weekly)
             if not benchmark_df.empty:
                 benchmark_comparison = compare_strategy_vs_benchmark(perf_df, benchmark_df, summary, start_cap)
                 print(f"\n┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓")

@@ -57,3 +57,6 @@ DEFAULT_BENCHMARK_WEIGHTS = {
     'BTC': 1.0,
     'ETH': 0.0
 }
+
+# Benchmark rebalancing strategy
+BENCHMARK_REBALANCE_WEEKLY = False  # If True, rebalance to target weights weekly; if False, buy-and-hold

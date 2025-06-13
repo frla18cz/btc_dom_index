@@ -40,7 +40,8 @@ from config.config import (
     BACKTEST_ALT_WEIGHT,
     BACKTEST_TOP_N_ALTS,
     BENCHMARK_AVAILABLE_ASSETS,
-    DEFAULT_BENCHMARK_WEIGHTS
+    DEFAULT_BENCHMARK_WEIGHTS,
+    BENCHMARK_REBALANCE_WEEKLY
 )
 
 # Import fetcher functions
@@ -377,6 +378,15 @@ benchmark_weights = {}
 use_benchmark = st.sidebar.checkbox("Enable Benchmark Comparison", value=True)
 
 if use_benchmark:
+    # Benchmark rebalancing strategy selection
+    benchmark_rebalance = st.sidebar.radio(
+        "**Benchmark Strategy:**",
+        options=[False, True],
+        format_func=lambda x: "🏠 Buy & Hold (weights drift)" if not x else "⚖️ Weekly Rebalanced (maintain weights)",
+        index=0,  # Default to Buy & Hold
+        help="Buy & Hold: Initial weights drift over time based on performance.\nWeekly Rebalanced: Weights are reset to targets each week."
+    )
+    
     st.sidebar.write("**Select Assets and Weights:**")
     
     # Quick preset buttons
@@ -438,12 +448,12 @@ if use_benchmark:
                 if weight > 0:
                     st.sidebar.write(f"• {asset}: {weight*100:.1f}%")
 
-# Excluded tokens (advanced option)
-show_advanced = st.sidebar.checkbox("Show Advanced Options")
+# Excluded tokens
+show_excluded = st.sidebar.checkbox("Show Excluded Tokens")
 excluded_tokens = EXCLUDED_SYMBOLS.copy()
 
-if show_advanced:
-    st.sidebar.subheader("Advanced Options")
+if show_excluded:
+    st.sidebar.subheader("Excluded Tokens")
     
     # Excluded tokens input
     excluded_tokens_input = st.sidebar.text_area(
@@ -499,6 +509,7 @@ if run_backtest:
             
             # Validate benchmark weights if benchmark is enabled
             benchmark_weights_final = None
+            benchmark_rebalance_final = False  # Default value if benchmark is not used
             if use_benchmark and benchmark_weights:
                 is_valid, error_msg = validate_benchmark_weights(benchmark_weights)
                 if not is_valid:
@@ -506,6 +517,7 @@ if run_backtest:
                     st.stop()
                 else:
                     benchmark_weights_final = benchmark_weights
+                    benchmark_rebalance_final = benchmark_rebalance
             
             # Run backtest
             st.info("Running backtest...")
@@ -520,6 +532,7 @@ if run_backtest:
                 start_cap=initial_capital,
                 detailed_output=True,
                 benchmark_weights=benchmark_weights_final,
+                benchmark_rebalance_weekly=benchmark_rebalance_final if use_benchmark else None,
             )
             
             # Restore stdout

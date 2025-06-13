@@ -39,15 +39,16 @@ def validate_benchmark_weights(weights: Dict[str, float]) -> Tuple[bool, str]:
 
 
 def calculate_benchmark_performance(df: pd.DataFrame, benchmark_weights: Dict[str, float], 
-                                  start_cap: float = 100000.0) -> pd.DataFrame:
+                                  start_cap: float = 100000.0, rebalance_weekly: bool = False) -> pd.DataFrame:
     """
-    Calculate benchmark portfolio performance using buy-and-hold strategy.
+    Calculate benchmark portfolio performance using buy-and-hold or rebalanced strategy.
     Aligns with strategy calculation method for consistent period counting.
     
     Args:
         df: DataFrame with prepared cryptocurrency data
         benchmark_weights: Dictionary mapping asset symbols to their weights
         start_cap: Initial capital in USD
+        rebalance_weekly: If True, rebalance to target weights each week; if False, buy-and-hold
         
     Returns:
         DataFrame with benchmark performance data including detailed asset breakdowns
@@ -71,7 +72,8 @@ def calculate_benchmark_performance(df: pd.DataFrame, benchmark_weights: Dict[st
     first_week = weeks[0]
     week_data = df[df["rebalance_ts"] == first_week].set_index("sym")
     
-    print(f"\n=== BENCHMARK PORTFOLIO INITIALIZATION ===")
+    benchmark_type = "Weekly Rebalanced" if rebalance_weekly else "Buy & Hold"
+    print(f"\n=== BENCHMARK PORTFOLIO INITIALIZATION ({benchmark_type}) ===")
     print(f"Initial Capital: ${start_cap:,.2f}")
     print(f"Portfolio Composition:")
     
@@ -136,6 +138,44 @@ def calculate_benchmark_performance(df: pd.DataFrame, benchmark_weights: Dict[st
             
             # Calculate weekly return
             weekly_return_pct = ((portfolio_value - prev_portfolio_value) / prev_portfolio_value) * 100 if prev_portfolio_value > 0 else 0.0
+            
+            # Rebalance to target weights if requested (skip first week as it's initialization)
+            if rebalance_weekly and i > 0:
+                rebalanced_positions = {}
+                rebalanced_value = 0.0
+                
+                for symbol, target_weight in benchmark_weights.items():
+                    if symbol in week_data.index:
+                        current_price = week_data.loc[symbol, "price_usd"]
+                        if pd.notna(current_price) and current_price > 0:
+                            # Calculate target value for this asset
+                            target_value = portfolio_value * target_weight
+                            # Calculate new quantity needed
+                            new_qty = target_value / current_price
+                            
+                            rebalanced_positions[symbol] = {
+                                "qty": new_qty,
+                                "initial_price": positions[symbol]["initial_price"] if symbol in positions else current_price,
+                                "current_price": current_price,
+                                "value": target_value,
+                                "weight": target_weight,
+                                "rank": week_data.loc[symbol, "rank"] if "rank" in week_data.columns else 0
+                            }
+                            rebalanced_value += target_value
+                        else:
+                            # Keep existing position if price is invalid
+                            if symbol in positions:
+                                rebalanced_positions[symbol] = positions[symbol].copy()
+                                rebalanced_value += positions[symbol]["value"]
+                    else:
+                        # Keep existing position if asset not found
+                        if symbol in positions:
+                            rebalanced_positions[symbol] = positions[symbol].copy()
+                            rebalanced_value += positions[symbol]["value"]
+                
+                # Update positions with rebalanced quantities
+                positions = rebalanced_positions
+                portfolio_value = rebalanced_value
         
         # Create detailed row with asset breakdown
         row_data = {
