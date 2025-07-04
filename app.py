@@ -13,6 +13,7 @@ import numpy as np
 from tabulate import tabulate
 import asyncio
 import threading
+import os
 
 # Import the analyzer functionality directly from analyzer_weekly
 from analyzer_weekly import (
@@ -69,22 +70,74 @@ def check_for_new_data(csv_file):
 def update_data_with_progress(csv_file, start_date):
     """Update data with progress tracking."""
     try:
-        # Scrape new data
-        new_df = scrape_historical(start_date=start_date)
+        # Scrape new data with proper error handling for Playwright
+        import subprocess
+        import sys
         
-        if not new_df.empty:
-            # Load existing data and append new data
-            existing_df = pd.read_csv(csv_file)
-            existing_df['snapshot_date'] = pd.to_datetime(existing_df['snapshot_date'])
-            
-            combined_df = pd.concat([existing_df, new_df], ignore_index=True)
-            combined_df = combined_df.sort_values('snapshot_date').reset_index(drop=True)
-            
-            # Save combined data
-            combined_df.to_csv(csv_file, index=False)
-            return len(new_df), len(combined_df)
+        # Create a temporary script to run the fetcher
+        temp_script = """
+import sys
+sys.path.insert(0, '.')
+from fetcher import scrape_historical
+import pandas as pd
+import datetime as dt
+
+start_date = dt.date({}, {}, {})
+new_df = scrape_historical(start_date=start_date)
+new_df.to_csv('temp_new_data.csv', index=False)
+print(f"Downloaded {{len(new_df)}} rows")
+""".format(start_date.year, start_date.month, start_date.day)
         
-        return 0, 0
+        # Write temp script
+        with open('temp_fetcher.py', 'w') as f:
+            f.write(temp_script)
+        
+        # Run the script in a subprocess
+        result = subprocess.run([sys.executable, 'temp_fetcher.py'], 
+                              capture_output=True, text=True, timeout=300)
+        
+        # Clean up temp script
+        try:
+            os.remove('temp_fetcher.py')
+        except:
+            pass
+        
+        if result.returncode == 0:
+            # Load the scraped data
+            if os.path.exists('temp_new_data.csv'):
+                new_df = pd.read_csv('temp_new_data.csv')
+                new_df['snapshot_date'] = pd.to_datetime(new_df['snapshot_date'])
+                
+                # Clean up temp data file
+                try:
+                    os.remove('temp_new_data.csv')
+                except:
+                    pass
+                
+                if not new_df.empty:
+                    # Load existing data and append new data
+                    existing_df = pd.read_csv(csv_file)
+                    existing_df['snapshot_date'] = pd.to_datetime(existing_df['snapshot_date'])
+                    
+                    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+                    combined_df = combined_df.sort_values('snapshot_date').reset_index(drop=True)
+                    
+                    # Save combined data
+                    combined_df.to_csv(csv_file, index=False)
+                    return len(new_df), len(combined_df)
+                
+                return 0, 0
+            else:
+                st.error("Failed to create temporary data file")
+                return None, None
+        else:
+            error_msg = result.stderr or result.stdout
+            st.error(f"Error running fetcher: {error_msg}")
+            return None, None
+        
+    except subprocess.TimeoutExpired:
+        st.error("Data fetching timed out after 5 minutes")
+        return None, None
     except Exception as e:
         st.error(f"Error updating data: {e}")
         return None, None
