@@ -146,19 +146,32 @@ def print_alt_portfolio_table(alt_data, weights, values, title):
     # Sort by weight percentage (descending)
     table_data.sort(key=lambda x: x[5], reverse=True)
     
+    # Format data for better display
+    formatted_data = []
+    for row in table_data:
+        formatted_row = [
+            row[0],                        # Symbol
+            f"{row[1]:.0f}" if isinstance(row[1], (int, float)) else str(row[1]),  # Rank
+            f"${row[2]:.2f}" if isinstance(row[2], (int, float)) else str(row[2]),  # Price USD
+            f"${row[3]:,.2f}" if isinstance(row[3], (int, float)) else str(row[3]),  # Value USD
+            f"{row[4]:.1f}%" if isinstance(row[4], (int, float)) else str(row[4]),  # % of Port
+            f"{row[5]:.1f}%" if isinstance(row[5], (int, float)) else str(row[5]),  # Weight %
+            f"{row[6]:.4f}" if isinstance(row[6], (int, float)) else str(row[6]),  # Quantity
+            f"{row[7]:.8f}" if isinstance(row[7], (int, float)) else str(row[7]),  # Price BTC
+        ]
+        formatted_data.append(formatted_row)
+    
     # Add totals row
-    table_data.append([
-        "TOTAL", "", "", 
-        total_value, 100.0, 100.0, "", ""
+    formatted_data.append([
+        "TOTAL", "—", "—", 
+        f"${total_value:,.2f}", "100.0%", "100.0%", "—", "—"
     ])
     
     headers = ["Symbol", "Rank", "Price USD", "Value USD", "% of Port", 
                "Weight %", "Quantity", "Price BTC"]
     
-    # Simplified formatting
-    print(tabulate(table_data, headers=headers, tablefmt="grid", 
-                  floatfmt=[".2f", ".0f", ".2f", ".2f", ".2f", ".2f", ".4f", ".8f"],
-                  numalign="right"))
+    print(tabulate(formatted_data, headers=headers, tablefmt="grid", 
+                  stralign="right", numalign="right"))
 
 
 def backtest_rank_altbtc_short(df: pd.DataFrame,
@@ -362,18 +375,23 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         w0 = df[df.rebalance_ts == t0].set_index('sym')
         w1 = df[df.rebalance_ts == t1].set_index('sym')
         
-        # Weekly header
+        # Get BTC prices for header
+        btc_price0 = w0.loc['BTC', 'price_usd']
+        btc_price1 = w1.loc['BTC', 'price_usd']
+        btc_change_pct = ((btc_price1 - btc_price0) / btc_price0) * 100
+        
+        # Enhanced weekly header with BTC price info
         week_header = f"WEEK {i+1}: {pd.Timestamp(t0).strftime('%Y-%m-%d')} → {pd.Timestamp(t1).strftime('%Y-%m-%d')}"
+        btc_header = f"BTC: ${btc_price0:,.2f} → ${btc_price1:,.2f} ({btc_change_pct:+.2f}%)"
         print("\n\n")
-        print("┏" + "━" * 80 + "┓")
-        print(f"┃{week_header:^80}┃")
-        print("┗" + "━" * 80 + "┛")
+        print("┏" + "━" * 100 + "┓")
+        print(f"┃{week_header:^100}┃")
+        print(f"┃{btc_header:^100}┃")
+        print("┗" + "━" * 100 + "┛")
         print("\n")
 
-        # Get BTC prices for this period
+        # Validate BTC prices (already fetched above for header)
         try:
-            btc_price0 = w0.loc["BTC", "price_usd"]
-            btc_price1 = w1.loc["BTC", "price_usd"]
             if pd.isna(btc_price0) or pd.isna(btc_price1) or btc_price0 == 0:
                 raise ValueError("BTC price is NaN or zero")
         except Exception as e:
@@ -409,7 +427,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         btc_return_pct = ((btc_price1 - btc_price0) / btc_price0) * 100
         
         print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
-        print(f"│                       BTC LONG POSITION - PERFORMANCE                        │")
+        print(f"│                          BTC LONG POSITION                                   │")
         print("├─────────────────────────────────────────────────────────────────────────────┤")
         print(f"│ WEEK {i+1} START ({pd.Timestamp(t0).strftime('%Y-%m-%d')}):                                                │")
         print(f"│   BTC Price:            ${btc_price0:15,.2f} USD                                │")
@@ -441,7 +459,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         
         # 2.2 Calculate ALT P&L - for shorts using fixed coin quantities
         print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
-        print(f"│                      ALT SHORT POSITIONS - PERFORMANCE                       │")
+        print(f"│                         ALT SHORT POSITIONS                                  │")
         print("└─────────────────────────────────────────────────────────────────────────────┘")
         
         if not alt_coin_quantities:
@@ -517,28 +535,45 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                     100.0  # Target Weight%
                 ])
                 
-                # Print table
+                # Print table with proper formatting
                 headers = [
                     "Symbol", "Rank", "Start Price", "End Price", "Change%", 
                     "Coins Qty", "Position USD", "% of Basket", "P&L (USD)", "Target Weight%"
                 ]
                 
-                # Explicit formatting for each column
-                formats = [
-                    ".0f",     # Symbol 
-                    ".0f",     # Rank
-                    ".2f",     # Start Price
-                    ".2f",     # End Price
-                    "+.2f",    # Change%
-                    ".4f",     # Coins Qty
-                    ".2f",     # Position USD
-                    ".2f",     # % of Basket
-                    "+.2f",    # P&L (USD)
-                    ".2f"      # Target Weight%
-                ]
+                # Format data for better display
+                formatted_data = []
+                for row in alt_pnl_data:
+                    if row[0] == "TOTAL":
+                        formatted_row = [
+                            row[0],  # Symbol
+                            "—",     # Rank  
+                            "—",     # Start Price
+                            "—",     # End Price
+                            "—",     # Change%
+                            "—",     # Coins Qty
+                            f"${row[6]:,.2f}",     # Position USD
+                            f"{row[7]:.1f}%",      # % of Basket
+                            f"${row[8]:+,.2f}",    # P&L (USD)
+                            f"{row[9]:.1f}%"       # Target Weight%
+                        ]
+                    else:
+                        formatted_row = [
+                            row[0],                 # Symbol
+                            f"{row[1]:.0f}",        # Rank
+                            f"${row[2]:.2f}",       # Start Price
+                            f"${row[3]:.2f}",       # End Price
+                            f"{row[4]:+.2f}%",      # Change%
+                            f"{row[5]:.4f}",        # Coins Qty
+                            f"${row[6]:,.2f}",      # Position USD
+                            f"{row[7]:.1f}%",       # % of Basket
+                            f"${row[8]:+,.2f}",     # P&L (USD)
+                            f"{row[9]:.1f}%"        # Target Weight%
+                        ]
+                    formatted_data.append(formatted_row)
                 
-                print(tabulate(alt_pnl_data, headers=headers, tablefmt="grid", 
-                              floatfmt=formats, numalign="right"))
+                print(tabulate(formatted_data, headers=headers, tablefmt="grid", 
+                              stralign="right", numalign="right"))
                 
                 # Add summary row after table
                 print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
@@ -807,7 +842,13 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         try:
             # Use provided parameter or fall back to config default
             rebalance_weekly = benchmark_rebalance_weekly if benchmark_rebalance_weekly is not None else BENCHMARK_REBALANCE_WEEKLY
-            benchmark_df = calculate_benchmark_performance(df, benchmark_weights, start_cap, rebalance_weekly)
+            
+            # Create filtered dataset for benchmark that matches the strategy analysis period
+            # The strategy uses weeks[0] to weeks[-1], so benchmark should use the same period
+            benchmark_weeks = weeks
+            filtered_df_for_benchmark = df[df["rebalance_ts"].isin(benchmark_weeks)]
+            
+            benchmark_df = calculate_benchmark_performance(filtered_df_for_benchmark, benchmark_weights, start_cap, rebalance_weekly)
             if not benchmark_df.empty:
                 benchmark_comparison = compare_strategy_vs_benchmark(perf_df, benchmark_df, summary, start_cap)
                 print(f"\n┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓")
