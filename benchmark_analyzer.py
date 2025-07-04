@@ -110,38 +110,8 @@ def calculate_benchmark_performance(df: pd.DataFrame, benchmark_weights: Dict[st
         print(f"Initialization Warnings: {len(initialization_errors)} issues")
     
     # Process week-to-week transitions for performance tracking (align with strategy methodology)
-    # Add initial week data point (portfolio setup)
-    initial_row_data = {
-        "Date": pd.Timestamp(weeks[0]),
-        "Portfolio_Value": total_allocation,
-        "Weekly_Return_Pct": 0.0,
-        "Period_Number": 0,
-        "Analysis_Period": 0  # Initial setup, not analysis period
-    }
-    
-    # Add initial asset-level data
-    for symbol in benchmark_weights:
-        if symbol in positions:
-            pos = positions[symbol]
-            initial_row_data.update({
-                f"{symbol}_Weight": pos["weight"],
-                f"{symbol}_Qty": pos["qty"],
-                f"{symbol}_Price": pos["current_price"],
-                f"{symbol}_Value": pos["value"],
-                f"{symbol}_Allocation_Pct": (pos["value"] / total_allocation * 100) if total_allocation > 0 else 0,
-                f"{symbol}_Return_Pct": 0.0  # Initial setup
-            })
-        else:
-            initial_row_data.update({
-                f"{symbol}_Weight": benchmark_weights[symbol],
-                f"{symbol}_Qty": 0,
-                f"{symbol}_Price": 0,
-                f"{symbol}_Value": 0,
-                f"{symbol}_Allocation_Pct": 0,
-                f"{symbol}_Return_Pct": 0
-            })
-    
-    benchmark_rows.append(initial_row_data)
+    # NOTE: Strategy starts its performance DataFrame from t1 (end of first analyzed week)
+    # We need to align benchmark to start from the same point for synchronized graphing
     
     # Now process week-to-week transitions (same as strategy approach)
     for i in range(len(weeks) - 1):
@@ -150,7 +120,7 @@ def calculate_benchmark_performance(df: pd.DataFrame, benchmark_weights: Dict[st
         week_data = df[df["rebalance_ts"] == next_week].set_index("sym")
         
         # Update positions with new prices and calculate portfolio value
-        prev_portfolio_value = total_allocation if i == 0 else portfolio_value
+        prev_portfolio_value = start_cap if i == 0 else portfolio_value
         portfolio_value = 0.0
         
         for symbol in positions:
@@ -209,8 +179,9 @@ def calculate_benchmark_performance(df: pd.DataFrame, benchmark_weights: Dict[st
             portfolio_value = rebalanced_value
         
         # Create detailed row with asset breakdown
+        # Use next_week (t1) as Date to align with strategy performance DataFrame
         row_data = {
-            "Date": pd.Timestamp(next_week),
+            "Date": pd.Timestamp(next_week),  # This aligns with strategy which uses t1 as Date
             "Portfolio_Value": portfolio_value,
             "Weekly_Return_Pct": weekly_return_pct,
             "Period_Number": i + 1,
