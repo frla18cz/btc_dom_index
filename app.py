@@ -93,7 +93,18 @@ try:
             print("Firefox browser is available")
         except Exception as e:
             print(f"Firefox not available: {{e}}")
-            print("Attempting to install Playwright browsers...")
+            print("Attempting to install Playwright browsers and dependencies...")
+            
+            # First try to install system dependencies
+            deps_result = subprocess.run([
+                sys.executable, "-m", "playwright", "install-deps", "firefox"
+            ], capture_output=True, text=True, timeout=300)
+            
+            if deps_result.returncode != 0:
+                print(f"Warning: Could not install system dependencies: {{deps_result.stderr}}")
+                print("Continuing with browser installation...")
+            else:
+                print("System dependencies installed successfully")
             
             # Try to install browsers
             install_result = subprocess.run([
@@ -167,10 +178,13 @@ print(f"Downloaded {{len(new_df)}} rows")
             st.error(f"Error running fetcher: {error_msg}")
             
             # Show helpful message for common issues
-            if "Executable doesn't exist" in error_msg or "playwright install" in error_msg:
+            if any(phrase in error_msg for phrase in ["Executable doesn't exist", "playwright install", "missing dependencies", "Host system is missing"]):
                 st.info("💡 **Alternative solution**: If you're running this locally, you can:")
                 st.code("python fetcher.py", language="bash")
                 st.write("This will download the missing data directly.")
+                
+                if "missing dependencies" in error_msg or "Host system is missing" in error_msg:
+                    st.warning("⚠️ **System dependencies issue**: The hosting environment may not support browser automation. This is a limitation of the current hosting setup.")
             
             return None, None
         
