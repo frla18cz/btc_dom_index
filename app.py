@@ -167,6 +167,11 @@ print(f"Downloaded {{len(new_df)}} rows")
                     
                     # Save combined data
                     combined_df.to_csv(csv_file, index=False)
+                    
+                    # Note: Data is saved to CSV but will be lost on Streamlit Cloud restart
+                    # For persistence, data should be committed and pushed to the repository
+                    print(f"Data updated: {len(new_df)} new snapshots added to {csv_file}")
+                    
                     return len(new_df), len(combined_df)
                 
                 return 0, 0
@@ -265,6 +270,13 @@ if csv_path.exists():
                     if new_rows is not None:
                         progress_bar.progress(100, text="Complete!")
                         st.success(f"✅ Added {new_rows} new rows! Total: {total_rows}")
+                        
+                        # Show persistence warning for cloud deployments
+                        if new_rows > 0:
+                            st.warning("⚠️ **Data Persistence Note**: Data has been updated for this session. "
+                                     "On Streamlit Cloud, data will be lost when the app restarts. "
+                                     "For permanent storage, run the fetcher locally and commit the data to the repository.")
+                        
                         st.rerun()  # Refresh the app to show new data
                     else:
                         st.error("❌ Failed to update data")

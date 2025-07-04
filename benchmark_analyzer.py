@@ -109,81 +109,112 @@ def calculate_benchmark_performance(df: pd.DataFrame, benchmark_weights: Dict[st
     if initialization_errors:
         print(f"Initialization Warnings: {len(initialization_errors)} issues")
     
-    # Process all weeks for performance tracking
-    for i, week in enumerate(weeks):
-        week_data = df[df["rebalance_ts"] == week].set_index("sym")
-        
-        if i == 0:
-            # First week - use initialized values
-            portfolio_value = total_allocation
-            weekly_return_pct = 0.0
+    # Process week-to-week transitions for performance tracking (align with strategy methodology)
+    # Add initial week data point (portfolio setup)
+    initial_row_data = {
+        "Date": pd.Timestamp(weeks[0]),
+        "Portfolio_Value": total_allocation,
+        "Weekly_Return_Pct": 0.0,
+        "Period_Number": 0,
+        "Analysis_Period": 0  # Initial setup, not analysis period
+    }
+    
+    # Add initial asset-level data
+    for symbol in benchmark_weights:
+        if symbol in positions:
+            pos = positions[symbol]
+            initial_row_data.update({
+                f"{symbol}_Weight": pos["weight"],
+                f"{symbol}_Qty": pos["qty"],
+                f"{symbol}_Price": pos["current_price"],
+                f"{symbol}_Value": pos["value"],
+                f"{symbol}_Allocation_Pct": (pos["value"] / total_allocation * 100) if total_allocation > 0 else 0,
+                f"{symbol}_Return_Pct": 0.0  # Initial setup
+            })
         else:
-            # Update positions with new prices and calculate portfolio value
-            prev_portfolio_value = portfolio_value
-            portfolio_value = 0.0
+            initial_row_data.update({
+                f"{symbol}_Weight": benchmark_weights[symbol],
+                f"{symbol}_Qty": 0,
+                f"{symbol}_Price": 0,
+                f"{symbol}_Value": 0,
+                f"{symbol}_Allocation_Pct": 0,
+                f"{symbol}_Return_Pct": 0
+            })
+    
+    benchmark_rows.append(initial_row_data)
+    
+    # Now process week-to-week transitions (same as strategy approach)
+    for i in range(len(weeks) - 1):
+        current_week = weeks[i]
+        next_week = weeks[i + 1]
+        week_data = df[df["rebalance_ts"] == next_week].set_index("sym")
+        
+        # Update positions with new prices and calculate portfolio value
+        prev_portfolio_value = total_allocation if i == 0 else portfolio_value
+        portfolio_value = 0.0
+        
+        for symbol in positions:
+            if symbol in week_data.index:
+                current_price = week_data.loc[symbol, "price_usd"]
+                if pd.notna(current_price) and current_price > 0:
+                    positions[symbol]["current_price"] = current_price
+                    positions[symbol]["value"] = positions[symbol]["qty"] * current_price
+                    portfolio_value += positions[symbol]["value"]
+                else:
+                    # Keep previous value if price is invalid
+                    portfolio_value += positions[symbol]["value"]
+            else:
+                # Keep previous value if asset not found
+                portfolio_value += positions[symbol]["value"]
+        
+        # Calculate weekly return
+        weekly_return_pct = ((portfolio_value - prev_portfolio_value) / prev_portfolio_value) * 100 if prev_portfolio_value > 0 else 0.0
+        
+        # Rebalance to target weights if requested
+        if rebalance_weekly:
+            rebalanced_positions = {}
+            rebalanced_value = 0.0
             
-            for symbol in positions:
+            for symbol, target_weight in benchmark_weights.items():
                 if symbol in week_data.index:
                     current_price = week_data.loc[symbol, "price_usd"]
                     if pd.notna(current_price) and current_price > 0:
-                        positions[symbol]["current_price"] = current_price
-                        positions[symbol]["value"] = positions[symbol]["qty"] * current_price
-                        portfolio_value += positions[symbol]["value"]
+                        # Calculate target value for this asset
+                        target_value = portfolio_value * target_weight
+                        # Calculate new quantity needed
+                        new_qty = target_value / current_price
+                        
+                        rebalanced_positions[symbol] = {
+                            "qty": new_qty,
+                            "initial_price": positions[symbol]["initial_price"] if symbol in positions else current_price,
+                            "current_price": current_price,
+                            "value": target_value,
+                            "weight": target_weight,
+                            "rank": week_data.loc[symbol, "rank"] if "rank" in week_data.columns else 0
+                        }
+                        rebalanced_value += target_value
                     else:
-                        # Keep previous value if price is invalid
-                        portfolio_value += positions[symbol]["value"]
-                else:
-                    # Keep previous value if asset not found
-                    portfolio_value += positions[symbol]["value"]
-            
-            # Calculate weekly return
-            weekly_return_pct = ((portfolio_value - prev_portfolio_value) / prev_portfolio_value) * 100 if prev_portfolio_value > 0 else 0.0
-            
-            # Rebalance to target weights if requested (skip first week as it's initialization)
-            if rebalance_weekly and i > 0:
-                rebalanced_positions = {}
-                rebalanced_value = 0.0
-                
-                for symbol, target_weight in benchmark_weights.items():
-                    if symbol in week_data.index:
-                        current_price = week_data.loc[symbol, "price_usd"]
-                        if pd.notna(current_price) and current_price > 0:
-                            # Calculate target value for this asset
-                            target_value = portfolio_value * target_weight
-                            # Calculate new quantity needed
-                            new_qty = target_value / current_price
-                            
-                            rebalanced_positions[symbol] = {
-                                "qty": new_qty,
-                                "initial_price": positions[symbol]["initial_price"] if symbol in positions else current_price,
-                                "current_price": current_price,
-                                "value": target_value,
-                                "weight": target_weight,
-                                "rank": week_data.loc[symbol, "rank"] if "rank" in week_data.columns else 0
-                            }
-                            rebalanced_value += target_value
-                        else:
-                            # Keep existing position if price is invalid
-                            if symbol in positions:
-                                rebalanced_positions[symbol] = positions[symbol].copy()
-                                rebalanced_value += positions[symbol]["value"]
-                    else:
-                        # Keep existing position if asset not found
+                        # Keep existing position if price is invalid
                         if symbol in positions:
                             rebalanced_positions[symbol] = positions[symbol].copy()
                             rebalanced_value += positions[symbol]["value"]
-                
-                # Update positions with rebalanced quantities
-                positions = rebalanced_positions
-                portfolio_value = rebalanced_value
+                else:
+                    # Keep existing position if asset not found
+                    if symbol in positions:
+                        rebalanced_positions[symbol] = positions[symbol].copy()
+                        rebalanced_value += positions[symbol]["value"]
+            
+            # Update positions with rebalanced quantities
+            positions = rebalanced_positions
+            portfolio_value = rebalanced_value
         
         # Create detailed row with asset breakdown
         row_data = {
-            "Date": pd.Timestamp(week),
+            "Date": pd.Timestamp(next_week),
             "Portfolio_Value": portfolio_value,
             "Weekly_Return_Pct": weekly_return_pct,
             "Period_Number": i + 1,
-            "Analysis_Period": i if i > 0 else 0  # 0 for initialization, 1+ for analysis periods
+            "Analysis_Period": i + 1  # Analysis period number
         }
         
         # Add asset-level data
