@@ -1,1 +1,2 @@
-web: gunicorn analyzer_app:app --bind 0.0.0.0:$PORT
+release: python -m playwright install firefox
+web: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
