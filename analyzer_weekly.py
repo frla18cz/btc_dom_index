@@ -944,7 +944,7 @@ def calculate_sortino_ratio(returns: np.ndarray, risk_free_rate: float = 0.02) -
     return (annualized_return - risk_free_rate) / downside_deviation
 
 
-def plot_equity_curve(perf_df: pd.DataFrame, summary: dict, start_date: dt.datetime, end_date: dt.datetime) -> plt.Figure:
+def plot_equity_curve(perf_df: pd.DataFrame, summary: dict, start_date: dt.datetime, end_date: dt.datetime, start_cap: float = START_CAP) -> plt.Figure:
     """Plot equity curve with drawdowns and key metrics."""
     if not perf_df.empty and "Equity_USD" in perf_df.columns:
         plot_data = perf_df.dropna(subset=["Equity_USD", "Date"])
@@ -954,11 +954,11 @@ def plot_equity_curve(perf_df: pd.DataFrame, summary: dict, start_date: dt.datet
                                          gridspec_kw={'height_ratios': [3, 1]})
             
             # --- Equity Curve (Top Plot) ---
-            ymin = min(START_CAP, plot_data["Equity_USD"].min()) * 0.9
-            ymax = max(START_CAP, plot_data["Equity_USD"].max()) * 1.1
+            ymin = min(start_cap, plot_data["Equity_USD"].min()) * 0.9
+            ymax = max(start_cap, plot_data["Equity_USD"].max()) * 1.1
             ymin = max(0, ymin)
             if ymin >= ymax:
-                ymax = ymin * 1.2 if ymin > 0 else START_CAP * 1.1
+                ymax = ymin * 1.2 if ymin > 0 else start_cap * 1.1
                 
             fmt = ScalarFormatter(useOffset=False)
             fmt.set_scientific(False)
@@ -993,8 +993,8 @@ def plot_equity_curve(perf_df: pd.DataFrame, summary: dict, start_date: dt.datet
             ax1.grid(True, which="minor", linestyle=":", alpha=0.5)
             ax1.minorticks_on()
             ax1.yaxis.set_major_formatter(fmt)
-            ax1.axhline(START_CAP, color="red", linestyle="--", linewidth=1, 
-                       label=f"Initial Capital (${START_CAP:,.0f})")
+            ax1.axhline(start_cap, color="red", linestyle="--", linewidth=1, 
+                       label=f"Initial Capital (${start_cap:,.0f})")
             
             # Calculate drawdown for shading
             equity = plot_data["Equity_USD"].values
@@ -1106,7 +1106,7 @@ def plot_btc_vs_alts(perf_df: pd.DataFrame) -> plt.Figure:
 def export_detailed_report(perf_df: pd.DataFrame, summary: dict, detailed_df: pd.DataFrame, 
                          start_date: dt.datetime, end_date: dt.datetime,
                          benchmark_df: pd.DataFrame = None, benchmark_comparison: dict = None,
-                         benchmark_weights: dict = None):
+                         benchmark_weights: dict = None, start_cap: float = START_CAP):
     """Export detailed backtest report to CSV files and plots."""
     # Create reports directory if it doesn't exist
     REPORTS_DIR.mkdir(exist_ok=True)
@@ -1199,7 +1199,7 @@ def export_detailed_report(perf_df: pd.DataFrame, summary: dict, detailed_df: pd
         f.write(f"Total P/L:         ${summary['cum_btc_pnl'] + summary['cum_alt_pnl']:+,.2f}\n\n")
         
         f.write("Performance Metrics:\n")
-        f.write(f"Initial Capital:   ${START_CAP:,.2f}\n")
+        f.write(f"Initial Capital:   ${start_cap:,.2f}\n")
         f.write(f"Final Equity:      ${summary['final_equity']:,.2f}\n")
         f.write(f"Total Return:      {summary['total_return_pct']:+.2f}%\n")
         f.write(f"Annualized Return: {summary['annualized_return']:+.2f}%\n")
@@ -1220,7 +1220,7 @@ def export_detailed_report(perf_df: pd.DataFrame, summary: dict, detailed_df: pd
     print(f"Exported summary to {summary_file}")
     
     # Save plots
-    equity_fig = plot_equity_curve(perf_df, summary, start_date, end_date)
+    equity_fig = plot_equity_curve(perf_df, summary, start_date, end_date, start_cap)
     if equity_fig:
         equity_plot_file = REPORTS_DIR / f"equity_curve_{timestamp}.png"
         equity_fig.savefig(equity_plot_file, dpi=300, bbox_inches="tight")
@@ -1315,10 +1315,10 @@ def main():
         print("└─────────────────────────────────────────────────────┘")
         
         # Export detailed report
-        export_detailed_report(perf, summary, detailed, START_DATE, END_DATE, benchmark_df, benchmark_comparison, DEFAULT_BENCHMARK_WEIGHTS)
+        export_detailed_report(perf, summary, detailed, START_DATE, END_DATE, benchmark_df, benchmark_comparison, DEFAULT_BENCHMARK_WEIGHTS, START_CAP)
         
         # Show plots
-        equity_fig = plot_equity_curve(perf, summary, START_DATE, END_DATE)
+        equity_fig = plot_equity_curve(perf, summary, START_DATE, END_DATE, START_CAP)
         if equity_fig:
             plt.figure(equity_fig.number)
             plt.show()

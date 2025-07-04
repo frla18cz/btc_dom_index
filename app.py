@@ -741,7 +741,7 @@ if run_backtest:
                     
                     # Equity curve
                     st.subheader("Equity Curve")
-                    equity_fig = plot_equity_curve(perf, summary, start_dt, end_dt)
+                    equity_fig = plot_equity_curve(perf, summary, start_dt, end_dt, initial_capital)
                     if equity_fig:
                         st.pyplot(equity_fig)
                     
