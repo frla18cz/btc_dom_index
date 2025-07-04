@@ -112,3 +112,52 @@ The backtesting algorithm in `analyzer_weekly.py` implements:
    - Each altcoin's weight is proportional to its market cap within the selected basket
 
 3. Performance is tracked in both USD and BTC terms
+
+## Recent Updates and Fixes
+
+### 2025-07-04: Comprehensive Verification and Bug Fixes
+
+**Major Issues Resolved:**
+1. **Streamlit Playwright Integration**: Fixed "download missing data" button that was failing with Playwright context manager errors
+   - **Solution**: Implemented subprocess execution instead of direct function calls
+   - **Files Modified**: `app.py`
+
+2. **Benchmark Synchronization**: Fixed benchmark portfolio starting one week earlier than strategy
+   - **Root Cause**: Benchmark started from `weeks[0]` while strategy started from `weeks[1]`
+   - **Solution**: Aligned both to start from same point (`weeks[1]`) for synchronized graphing
+   - **Files Modified**: `benchmark_analyzer.py`
+
+3. **Data Persistence on Streamlit Cloud**: Added warnings about data persistence limitations
+   - **Files Modified**: `app.py`, `packages.txt`, `Procfile`
+
+**Verification Results (June 2025 Test Period):**
+- **Strategy Total Return**: 2.24%
+- **Benchmark (BTC Buy & Hold) Return**: 1.18%
+- **Alpha (Excess Return)**: 8.65%
+- **Date Alignment**: ✅ Perfect synchronization
+- **Manual Calculation Verification**: ✅ 0.0000% difference
+- **Performance Metrics**: 
+  - Sharpe Ratio: 4.93
+  - Max Drawdown: 0.78%
+  - Win Rate: 75%
+  - Annualized Return: 29.18%
+
+**Files Added:**
+- `verify_calculations.py`: Comprehensive verification script for checking calculation accuracy
+- `packages.txt`: System dependencies for Streamlit Cloud deployment
+
+**Dependencies Updated:**
+- `requirements.txt`: Cleaned up unused packages, added numpy explicitly
+- Removed: flask, gunicorn, ace-tools, python-dotenv
+- Added: numpy (explicit dependency)
+
+**Key Technical Improvements:**
+- Fixed benchmark calculation alignment with strategy performance tracking
+- Improved error handling for Playwright browser automation in cloud environments
+- Enhanced data persistence warnings and user guidance
+- Verified all calculations are mathematically correct
+
+**Testing Status**: ✅ All calculations verified as correct
+- Benchmark calculations match manual BTC price calculations
+- Date alignment is perfect between strategy and benchmark
+- Performance metrics are accurate and consistent

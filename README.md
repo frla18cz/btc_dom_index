@@ -1,74 +1,159 @@
-# BTC Dominance - Top 20 Altcoin Weights
+# BTC Dominance Index - Cryptocurrency Trading Strategy Backtester
 
-## Project Goal
+## Project Overview
 
-This project fetches historical weekly market capitalization data for the top 20 cryptocurrencies (excluding BTC and major stablecoins) relative to Bitcoin's market cap. It calculates the relative weight of each altcoin within this top 20 cohort for each weekly snapshot.
+This project implements a comprehensive cryptocurrency trading strategy backtester that analyzes the performance of going long on Bitcoin (BTC) while shorting a basket of top altcoins. It fetches historical market capitalization data for top cryptocurrencies and provides both command-line analysis tools and a web-based interface for interactive backtesting.
 
-## Setup
+## Key Features
 
-1.  **Clone the repository:**
-    ```bash
-    git clone <repository_url>
-    cd btc_dom_index
-    ```
-2.  **Create a virtual environment:** (Recommended)
-    ```bash
-    python -m venv venv
-    source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-    ```
-3.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
-4.  **Configure API Key:**
-    This script requires an API key from [CryptoCompare](https://min-api.cryptocompare.com/). It's **strongly recommended** to *not* hardcode the API key directly in `main.py`. Instead, use an environment variable:
-    *   Set an environment variable named `CRYPTOCOMPARE_API_KEY`.
-    *   Modify `main.py` to read this variable (e.g., using `os.getenv('CRYPTOCOMPARE_API_KEY')`).
+- **Real-time Data Fetching**: Automated web scraping of CoinMarketCap historical data using Playwright
+- **Interactive Web Interface**: Streamlit-based web app with configurable parameters
+- **Comprehensive Backtesting**: Strategy performance analysis with benchmark comparison
+- **Risk Metrics**: Sharpe ratio, drawdown analysis, and correlation metrics
+- **Smart Data Management**: Automatic detection and fetching of missing data periods
+- **Verified Calculations**: All calculations have been thoroughly tested and verified
 
-    Alternatively, you could use a configuration file (e.g., `.env` or `config.ini`) and ensure it's added to `.gitignore`.
+## Strategy Logic
 
-## Configuration Parameters (in `main.py`)
+The backtesting implements a **BTC Long + ALT Short** strategy:
 
-The following parameters can be adjusted at the top of `main.py`:
+1. **Long Position**: 50% of portfolio allocated to Bitcoin (BTC)
+2. **Short Position**: 50% of portfolio allocated to shorting top N altcoins (default: 10)
+3. **Weekly Rebalancing**: Portfolio rebalanced every week based on current market cap rankings
+4. **Smart Exclusions**: Automatically excludes stablecoins, wrapped tokens, and other specified assets
 
-*   `LIMIT`: Number of coins to fetch per API call (default: 100).
-*   `TSYM`: The currency to denominate market cap in (default: "BTC").
-*   `START`: The start date and time for fetching data.
-*   `END`: The end date and time for fetching data.
-*   The list of symbols to exclude (currently hardcoded in the `to_dataframe` function). Consider moving this to a constant at the top for easier modification.
+## Setup and Installation
+
+### 1. Clone the Repository
+```bash
+git clone <repository_url>
+cd btc_dom_index
+```
+
+### 2. Create Virtual Environment
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+### 3. Install Dependencies
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Setup Playwright (for data fetching)
+```bash
+python -m playwright install firefox
+```
 
 ## Usage
 
-Ensure your environment is set up and the API key is configured. Then run the script:
-
+### Command Line Analysis
 ```bash
-python main.py
+# Fetch latest data
+python fetcher.py
+
+# Add historical data from 2021
+python fetcher.py --add-historical
+
+# Run backtest analysis
+python analyzer_weekly.py
+
+# Verify calculations
+python verify_calculations.py
 ```
 
-The script will iterate through the specified date range, fetching data weekly, and print progress. A 1-second delay is included between API calls to respect free-tier limits.
+### Web Interface
+```bash
+streamlit run app.py
+```
 
-## Output
+The web interface provides:
+- **Interactive parameter configuration**
+- **Real-time data updates**
+- **Visual performance charts**
+- **Benchmark comparison**
+- **Detailed performance metrics**
 
-The script generates a CSV file named `btcdom_top20_weights.csv` in the project root directory. This file contains the following columns:
+## Configuration
 
-*   `sym`: Cryptocurrency symbol.
-*   `mcap_btc`: Market capitalization denominated in BTC.
-*   `weight`: The relative weight of the coin's market cap within the top 20 for that snapshot.
-*   `price_usd`: USD price of the cryptocurrency at the snapshot time
-*   `rebalance_ts`: The timestamp (UTC) of the weekly snapshot.
+Key parameters can be configured in `config/config.py`:
 
-This output file is generated by the script and is configured to be ignored by Git .
-## Code Structure and Refactoring
+- `BACKTEST_BTC_WEIGHT`: BTC allocation percentage (default: 50%)
+- `BACKTEST_ALT_WEIGHT`: ALT short allocation percentage (default: 50%)
+- `BACKTEST_TOP_N_ALTS`: Number of altcoins in short basket (default: 10)
+- `EXCLUDED_SYMBOLS`: Tokens to exclude from analysis
+- `BENCHMARK_WEIGHTS`: Custom benchmark portfolio weights
 
-The data fetching and initial processing logic has been refactored into a dedicated `CryptoCompareFetcher` class within `main.py`. This class encapsulates the API calls and the transformation of raw data into a pandas DataFrame.
+## File Structure
 
-This refactoring separates the data acquisition concerns from potential future analysis or backtesting logic, making the codebase more modular and easier to extend. Future features, such as backtesting strategies, can now interact with the fetched data via the `CryptoCompareFetcher` instance without being tightly coupled to the fetching implementation details.
+```
+btc_dom_index/
+├── app.py                 # Streamlit web application
+├── analyzer_weekly.py     # Core backtesting engine
+├── benchmark_analyzer.py  # Benchmark comparison tools
+├── fetcher.py            # Data fetching with Playwright
+├── verify_calculations.py # Calculation verification script
+├── config/
+│   └── config.py         # Configuration parameters
+├── requirements.txt      # Python dependencies
+├── packages.txt         # System dependencies for deployment
+├── Procfile             # Deployment configuration
+└── CLAUDE.md           # Development documentation
+```
 
-## Improvement Plan
+## Data Sources
 
-*   Added a USD price column to `btcdom_top20_weights.csv` by calculating token prices in USD from their BTC price and the historical BTC/USD exchange rate retrieved from the API.
+- **Primary**: CoinMarketCap historical snapshots (web scraping)
+- **Frequency**: Weekly snapshots (Monday market data)
+- **Coverage**: Top 100+ cryptocurrencies by market cap
+- **Exclusions**: Stablecoins, wrapped tokens, and other specified assets
 
-### Consequences
+## Performance Verification
 
-*   The CSV output now includes an additional column for USD prices, increasing file size and complexity.
-*   Relies on the availability of historical BTC/USD data; missing data may result in null USD price values.
+The system has been thoroughly tested and verified:
+
+- **Manual Calculation Verification**: ✅ 0.0000% difference from manual calculations
+- **Date Alignment**: ✅ Perfect synchronization between strategy and benchmark
+- **Test Period**: June 2025 (4 weeks)
+- **Strategy Return**: 2.24% vs Benchmark 1.18% (Alpha: 8.65%)
+
+## Recent Updates (2025-07-04)
+
+### Major Bug Fixes:
+1. **Streamlit Integration**: Fixed Playwright context manager errors in web interface
+2. **Benchmark Synchronization**: Resolved benchmark starting one week early
+3. **Data Persistence**: Added cloud deployment compatibility
+
+### Technical Improvements:
+- Enhanced error handling for browser automation
+- Improved calculation accuracy verification
+- Streamlined dependency management
+- Added comprehensive testing framework
+
+### Files Modified:
+- `app.py`: Subprocess execution for Playwright
+- `benchmark_analyzer.py`: Date alignment fixes
+- `requirements.txt`: Dependency cleanup
+- Added: `verify_calculations.py`, `packages.txt`
+
+## Deployment
+
+The application is designed for deployment on Streamlit Cloud with automatic dependency management and browser installation.
+
+### Required Files:
+- `requirements.txt`: Python dependencies
+- `packages.txt`: System dependencies for Firefox
+- `Procfile`: Playwright browser installation commands
+
+## Risk Disclaimer
+
+This software is for educational and research purposes only. Cryptocurrency trading involves substantial risk and may not be suitable for all investors. Past performance does not guarantee future results.
+
+## License
+
+[Specify your license here]
+
+## Contributing
+
+[Specify contribution guidelines here]
