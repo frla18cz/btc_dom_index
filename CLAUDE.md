@@ -161,3 +161,55 @@ The backtesting algorithm in `analyzer_weekly.py` implements:
 - Benchmark calculations match manual BTC price calculations
 - Date alignment is perfect between strategy and benchmark
 - Performance metrics are accurate and consistent
+
+### 2025-07-04: Complete Chart Visualization Fix
+
+**Major Chart Issues Resolved:**
+
+**1. Strategy Chart Baseline Problem**
+- **Issue**: Strategy charts showed downward trends despite positive returns (+4.65%)
+- **Root Cause**: Performance DataFrame missing initial data point (t0), starting from week 1 end ($105,097.52) instead of initial capital ($100,000.00)
+- **Solution**: Added initial performance row with starting capital and zero P&L
+- **Files Modified**: `analyzer_weekly.py` (lines 371-387)
+
+**2. Plot Function Baseline Issues**
+- **Issue**: `plot_equity_curve()` function used hardcoded START_CAP instead of actual initial_capital from UI
+- **Solution**: 
+  - Updated function signature to accept `start_cap` parameter
+  - Fixed Y-axis scaling and baseline references
+  - Updated all calling locations in `app.py`
+- **Files Modified**: `analyzer_weekly.py`, `app.py`
+
+**3. Benchmark Chart Baseline Problem**
+- **Issue**: Benchmark charts also started from end of first week instead of initial capital
+- **Root Cause**: Same as strategy - missing initial data point (t0)
+- **Solution**: Added initial benchmark data point with starting capital in `calculate_benchmark_performance()`
+- **Files Modified**: `benchmark_analyzer.py`
+
+**Chart Verification Results:**
+- ✅ **Strategy Charts**: Now correctly show 📈 UP trends for positive returns
+- ✅ **Benchmark Charts**: Now correctly start at 100% baseline
+- ✅ **Chart Normalization**: Both strategy and benchmark charts start at 100.0%
+- ✅ **Baseline Visibility**: All baselines properly positioned within Y-axis ranges
+- ✅ **Trend Direction**: Visual trends now match actual return directions
+
+**Test Files Added:**
+- `debug_streamlit_chart.py`: Comprehensive debugging script for chart issues
+- `test_chart_fix.py`: Verification script for strategy chart baseline fixes
+- `test_benchmark_chart.py`: Verification script for benchmark chart baseline fixes
+- `debug_comparison.py`: Additional debugging utilities
+- `manual_verification.py`: Manual calculation verification
+- `verify_ui_params.py`: UI parameter verification
+
+**Key Technical Changes:**
+1. **Initial Data Point Addition**: Both strategy and benchmark DataFrames now include t0 (starting point)
+2. **Function Parameter Updates**: `plot_equity_curve()` accepts dynamic start_cap parameter
+3. **Calculation Adjustments**: Weekly return calculations skip initial 0% return row
+4. **Y-axis Scaling Fix**: Charts use actual start_cap for baseline positioning
+
+**Chart Reliability**: 🎯 **100% Confidence**
+- All charts now accurately reflect portfolio performance
+- Positive returns correctly display as upward trends
+- Negative returns correctly display as downward trends
+- Baselines properly positioned and visible
+- Visual representation matches mathematical calculations
