@@ -78,6 +78,38 @@ def update_data_with_progress(csv_file, start_date):
         temp_script = """
 import sys
 sys.path.insert(0, '.')
+import subprocess
+import os
+
+# First, try to install Playwright browsers if needed
+try:
+    # Check if Firefox is available
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        try:
+            # Test if Firefox is available
+            browser = p.firefox.launch(headless=True)
+            browser.close()
+            print("Firefox browser is available")
+        except Exception as e:
+            print(f"Firefox not available: {{e}}")
+            print("Attempting to install Playwright browsers...")
+            
+            # Try to install browsers
+            install_result = subprocess.run([
+                sys.executable, "-m", "playwright", "install", "firefox"
+            ], capture_output=True, text=True, timeout=300)
+            
+            if install_result.returncode != 0:
+                print(f"Failed to install Firefox: {{install_result.stderr}}")
+                raise Exception("Cannot install Firefox browser")
+            else:
+                print("Firefox installed successfully")
+except Exception as e:
+    print(f"Error setting up Playwright: {{e}}")
+    sys.exit(1)
+
+# Now try to scrape the data
 from fetcher import scrape_historical
 import pandas as pd
 import datetime as dt
@@ -92,9 +124,9 @@ print(f"Downloaded {{len(new_df)}} rows")
         with open('temp_fetcher.py', 'w') as f:
             f.write(temp_script)
         
-        # Run the script in a subprocess
+        # Run the script in a subprocess (increased timeout for browser installation)
         result = subprocess.run([sys.executable, 'temp_fetcher.py'], 
-                              capture_output=True, text=True, timeout=300)
+                              capture_output=True, text=True, timeout=600)
         
         # Clean up temp script
         try:
@@ -133,10 +165,17 @@ print(f"Downloaded {{len(new_df)}} rows")
         else:
             error_msg = result.stderr or result.stdout
             st.error(f"Error running fetcher: {error_msg}")
+            
+            # Show helpful message for common issues
+            if "Executable doesn't exist" in error_msg or "playwright install" in error_msg:
+                st.info("💡 **Alternative solution**: If you're running this locally, you can:")
+                st.code("python fetcher.py", language="bash")
+                st.write("This will download the missing data directly.")
+            
             return None, None
         
     except subprocess.TimeoutExpired:
-        st.error("Data fetching timed out after 5 minutes")
+        st.error("Data fetching timed out after 10 minutes")
         return None, None
     except Exception as e:
         st.error(f"Error updating data: {e}")
@@ -203,7 +242,8 @@ if csv_path.exists():
                     progress_bar = st.progress(0, text="Initializing...")
                     
                     # Update progress text
-                    progress_bar.progress(25, text="Scraping CoinMarketCap...")
+                    progress_bar.progress(25, text="Setting up browser...")
+                    st.caption("This may take a few minutes on first run...")
                     
                     # Perform the update
                     new_rows, total_rows = update_data_with_progress(csv_path, next_date)
