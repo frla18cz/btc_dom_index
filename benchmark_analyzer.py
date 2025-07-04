@@ -109,6 +109,42 @@ def calculate_benchmark_performance(df: pd.DataFrame, benchmark_weights: Dict[st
     if initialization_errors:
         print(f"Initialization Warnings: {len(initialization_errors)} issues")
     
+    # Add initial benchmark data point (t0 with starting capital) to align with strategy
+    # This ensures charts start from the actual initial capital instead of first week end
+    first_week = weeks[0]
+    initial_row_data = {
+        "Date": pd.Timestamp(first_week),
+        "Portfolio_Value": start_cap,
+        "Weekly_Return_Pct": 0.0,
+        "Period_Number": 0,
+        "Analysis_Period": 0
+    }
+    
+    # Add initial asset-level data for the first week
+    for symbol in benchmark_weights:
+        if symbol in positions:
+            pos = positions[symbol]
+            initial_row_data.update({
+                f"{symbol}_Weight": pos["weight"],
+                f"{symbol}_Qty": pos["qty"],
+                f"{symbol}_Price": pos["initial_price"],
+                f"{symbol}_Value": pos["value"],
+                f"{symbol}_Allocation_Pct": (pos["value"] / start_cap * 100) if start_cap > 0 else 0,
+                f"{symbol}_Return_Pct": 0.0  # No return yet at t0
+            })
+        else:
+            # Asset not available - set to zero
+            initial_row_data.update({
+                f"{symbol}_Weight": benchmark_weights[symbol],
+                f"{symbol}_Qty": 0,
+                f"{symbol}_Price": 0,
+                f"{symbol}_Value": 0,
+                f"{symbol}_Allocation_Pct": 0,
+                f"{symbol}_Return_Pct": 0
+            })
+    
+    benchmark_rows.append(initial_row_data)
+    
     # Process week-to-week transitions for performance tracking (align with strategy methodology)
     # NOTE: Strategy starts its performance DataFrame from t1 (end of first analyzed week)
     # We need to align benchmark to start from the same point for synchronized graphing
@@ -184,8 +220,8 @@ def calculate_benchmark_performance(df: pd.DataFrame, benchmark_weights: Dict[st
             "Date": pd.Timestamp(next_week),  # This aligns with strategy which uses t1 as Date
             "Portfolio_Value": portfolio_value,
             "Weekly_Return_Pct": weekly_return_pct,
-            "Period_Number": i + 1,
-            "Analysis_Period": i + 1  # Analysis period number
+            "Period_Number": i + 2,  # Adjusted because we now have initial row at i=0
+            "Analysis_Period": i + 1  # Analysis period number (unchanged)
         }
         
         # Add asset-level data
@@ -229,7 +265,8 @@ def calculate_benchmark_performance(df: pd.DataFrame, benchmark_weights: Dict[st
         print(f"Snapshots: {num_periods} | Analysis Periods: {analysis_periods}")
         
         if analysis_periods > 0:
-            weekly_returns = benchmark_df["Weekly_Return_Pct"].dropna()
+            # Skip the initial row (which has 0% return) for average calculation
+            weekly_returns = benchmark_df["Weekly_Return_Pct"].iloc[1:].dropna()
             if len(weekly_returns) > 0:
                 avg_weekly_return = weekly_returns.mean()
                 annualized_return = total_return * (52 / analysis_periods)
@@ -270,7 +307,8 @@ def compare_strategy_vs_benchmark(strategy_perf: pd.DataFrame, benchmark_perf: p
     
     # Calculate benchmark metrics with proper period counting
     benchmark_total_return = ((benchmark_values.iloc[-1] - start_cap) / start_cap) * 100
-    benchmark_weekly_returns = benchmark_perf["Weekly_Return_Pct"].dropna().values
+    # Skip the initial row (which has 0% return) for calculations
+    benchmark_weekly_returns = benchmark_perf["Weekly_Return_Pct"].iloc[1:].dropna().values
     
     # Use actual analysis periods for annualization (number of weeks analyzed)
     # For period counting: if we have N data points, we have N-1 analysis periods
@@ -296,7 +334,8 @@ def compare_strategy_vs_benchmark(strategy_perf: pd.DataFrame, benchmark_perf: p
     
     # Calculate correlation
     strategy_returns = strategy_perf["Weekly_Return_Pct"].dropna().values
-    benchmark_returns_aligned = benchmark_perf["Weekly_Return_Pct"].dropna().values
+    # Skip the initial row (which has 0% return) for correlation calculation
+    benchmark_returns_aligned = benchmark_perf["Weekly_Return_Pct"].iloc[1:].dropna().values
     
     correlation = 0.0
     if len(strategy_returns) > 1 and len(benchmark_returns_aligned) > 1:
