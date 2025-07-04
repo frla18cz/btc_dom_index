@@ -367,6 +367,24 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
             print("No valid market cap data for ALTs. Cannot initialize short positions.")
     else:
         print("No ALTs available after filtering. No short positions initialized.")
+    
+    # Add initial performance data point (t0 with starting capital)
+    initial_alt_value = sum(alt_values.values()) if alt_values else 0
+    rows.append({
+        "Date": pd.Timestamp(t0),
+        "Equity_USD": start_cap,
+        "BTC_Price_USD": btc_price0,
+        "BtcQty": btc_qty,
+        "BtcHold_USD": btc_qty * btc_price0,
+        "AltShortTarget_USD": alt_w * start_cap,
+        "AltShortActual_USD": initial_alt_value,
+        "AltShortCount": len(alt_coin_quantities),
+        "Weekly_BTC_PNL_USD": 0.0,
+        "Weekly_ALT_PNL_USD": 0.0,
+        "Cum_BTC_PNL_USD": 0.0,
+        "Cum_ALT_PNL_USD": 0.0,
+        "Weekly_Return_Pct": 0.0
+    })
 
     # ===== MAIN BACKTEST LOOP =====
     for i in range(len(weeks) - 1):
