@@ -248,6 +248,39 @@ if csv_path.exists():
         # Show available data range
         st.sidebar.success(f"📊 **Available Data Range:**\n{available_start_date} to {available_end_date}")
         st.sidebar.info(f"Total snapshots: {len(df_dates)}")
+
+        # Detect missing Mondays within available range and warn in UI
+        try:
+            dates = df_dates['snapshot_date'].dt.date
+            present = set(dates.unique())
+
+            # Align to Mondays
+            start_monday = available_start_date
+            if start_monday.weekday() != 0:
+                start_monday = start_monday + dt.timedelta(days=(7 - start_monday.weekday()) % 7)
+            end_monday = available_end_date
+            if end_monday.weekday() != 0:
+                end_monday = end_monday - dt.timedelta(days=end_monday.weekday())
+
+            # Build expected Mondays
+            expected = []
+            cur = start_monday
+            while cur <= end_monday:
+                expected.append(cur)
+                cur += dt.timedelta(days=7)
+
+            missing_mondays = [d for d in expected if d not in present]
+
+            if missing_mondays:
+                # Show a concise warning about known missing snapshots
+                miss_str = ", ".join(str(d) for d in missing_mondays[:3])
+                extra = "" if len(missing_mondays) <= 3 else f" +{len(missing_mondays)-3} more"
+                st.sidebar.warning(
+                    "⚠️ Chybí historické snapshoty: " + miss_str + extra + 
+                    "\nDůvod: známa chyba na CoinMarketCap historické stránce."
+                )
+        except Exception:
+            pass
         
         # Check for new data availability
         next_date, new_count = check_for_new_data(csv_path)
@@ -511,17 +544,19 @@ if use_benchmark:
     # Quick preset buttons
     col1, col2 = st.sidebar.columns(2)
     with col1:
-        if st.button("💰 100% BTC", help="Set 100% BTC (default)", type="primary"):
+        if st.button("💰 100% BTC", help="Set 100% BTC", type="secondary"):
             st.session_state.benchmark_btc = 100.0
             for asset in available_assets[1:]:  # Reset others
                 st.session_state[f"benchmark_{asset.lower()}"] = 0.0
+            st.rerun()
     
     with col2:
-        if st.button("⚖️ 50/50 BTC/ETH", help="Set 50% BTC, 50% ETH"):
+        if st.button("⚖️ 50/50 BTC/ETH", help="Set 50% BTC, 50% ETH", type="primary"):
             st.session_state.benchmark_btc = 50.0
             st.session_state.benchmark_eth = 50.0
             for asset in available_assets[2:]:  # Reset others
                 st.session_state[f"benchmark_{asset.lower()}"] = 0.0
+            st.rerun()
     
     # Individual asset weight sliders
     total_weight = 0.0

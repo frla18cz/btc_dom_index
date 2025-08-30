@@ -1,6 +1,6 @@
 """Fetch historical weekly top tokens from CoinMarketCap with dynamic loading."""
 # pip install playwright bs4 pandas tqdm
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from bs4 import BeautifulSoup
 import pandas as pd
 import datetime as dt
@@ -46,52 +46,66 @@ def get_first_date_from_csv(csv_file):
     df['snapshot_date'] = pd.to_datetime(df['snapshot_date'])
     return df['snapshot_date'].min().date()
 
-def scrape_historical(start_date=None):
-    """Scrape CoinMarketCap historical snapshots dynamically via Playwright."""
+def scrape_historical(start_date=None, end_date=None, browser_name: str = "firefox"):
+    """Scrape CoinMarketCap historical snapshots dynamically via Playwright.
+    Optionally limit with end_date (inclusive).
+    """
     weekly_frames = []
     
     # If start_date is provided, use it; otherwise use global START
     actual_start = start_date if start_date else START
+    actual_end = end_date if end_date else END
 
     with sync_playwright() as p:
-        browser = p.firefox.launch(headless=True)
+        bt = getattr(p, browser_name)
+        browser = bt.launch(headless=True)
         page = browser.new_page()
 
-        monday_list = list(mondays(actual_start, END))
-        print(f"Scraping {len(monday_list)} snapshots from {actual_start} to {END}")
+        monday_list = list(mondays(actual_start, actual_end))
+        print(f"Scraping {len(monday_list)} snapshots from {actual_start} to {actual_end}")
         
         for date in tqdm(monday_list):
             url = f"https://coinmarketcap.com/historical/{date}/"
-            page.goto(url, timeout=60000)
-            # wait for table rows to appear
-            page.wait_for_selector("tr.cmc-table-row")
-            # incrementally scroll to load up to MAX_TOKENS rows via virtualization
-            if MAX_TOKENS:
-                # count loaded rows by symbol-cell presence
-                loaded = page.evaluate(
-                    "() => document.querySelectorAll('td.cmc-table__cell--sort-by__symbol').length")
-                total_height = page.evaluate("() => document.body.scrollHeight")
-                viewport = page.evaluate("() => window.innerHeight")
-                step = max(200, int(viewport * 0.8))
-                scroll_pos = 0
-                # scroll until we have enough loaded symbols or reach bottom
-                while loaded < MAX_TOKENS and scroll_pos < total_height:
-                    scroll_pos += step
-                    page.evaluate(f"() => window.scrollTo(0, {scroll_pos})")
-                    page.wait_for_timeout(500)
+            try:
+                page.goto(url, timeout=60000)
+                # ensure basic load
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=15000)
+                except PlaywrightTimeoutError:
+                    pass
+                # wait for table rows to appear (older pages might be slower)
+                page.wait_for_selector("tr.cmc-table-row", timeout=45000)
+
+                # incrementally scroll to load up to MAX_TOKENS rows via virtualization
+                if MAX_TOKENS:
+                    # count loaded rows by symbol-cell presence
                     loaded = page.evaluate(
                         "() => document.querySelectorAll('td.cmc-table__cell--sort-by__symbol').length")
-            # final scroll to bottom to ensure all in-view
-            page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
-            page.wait_for_timeout(500)
-            html = page.content()
-            soup = BeautifulSoup(html, "html.parser")
-            rows = soup.select("tr.cmc-table-row")
-            if MAX_TOKENS:
-                rows = rows[:MAX_TOKENS]
-            for r in rows:
-                cols = [c.get_text(strip=True) for c in r.select("td")]
-                weekly_frames.append([date] + cols[:7])
+                    total_height = page.evaluate("() => document.body.scrollHeight")
+                    viewport = page.evaluate("() => window.innerHeight")
+                    step = max(200, int(viewport * 0.8))
+                    scroll_pos = 0
+                    # scroll until we have enough loaded symbols or reach bottom
+                    while loaded < MAX_TOKENS and scroll_pos < total_height:
+                        scroll_pos += step
+                        page.evaluate(f"() => window.scrollTo(0, {scroll_pos})")
+                        page.wait_for_timeout(500)
+                        loaded = page.evaluate(
+                            "() => document.querySelectorAll('td.cmc-table__cell--sort-by__symbol').length")
+                # final scroll to bottom to ensure all in-view
+                page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
+                page.wait_for_timeout(500)
+                html = page.content()
+                soup = BeautifulSoup(html, "html.parser")
+                rows = soup.select("tr.cmc-table-row")
+                if MAX_TOKENS:
+                    rows = rows[:MAX_TOKENS]
+                for r in rows:
+                    cols = [c.get_text(strip=True) for c in r.select("td")]
+                    weekly_frames.append([date] + cols[:7])
+            except PlaywrightTimeoutError:
+                print(f"Warning: timeout while processing {date}, skipping.")
+                continue
 
         browser.close()
 
@@ -102,7 +116,7 @@ def scrape_historical(start_date=None):
     df['snapshot_date'] = pd.to_datetime(df['snapshot_date'], format='%Y%m%d')
     return df
 
-def add_historical_data(csv_file, target_start_date):
+def add_historical_data(csv_file, target_start_date, browser_name: str = "firefox"):
     """Add historical data before the current earliest date in CSV."""
     first_date = get_first_date_from_csv(csv_file)
     if not first_date:
@@ -118,8 +132,8 @@ def add_historical_data(csv_file, target_start_date):
     print(f"Current data starts from: {first_date}")
     print(f"Fetching historical data from {target_start_date} to {end_date}")
     
-    # Scrape historical data
-    historical_df = scrape_historical(start_date=target_start_date)
+    # Scrape historical data only up to the last Monday before first_date
+    historical_df = scrape_historical(start_date=target_start_date, end_date=end_date, browser_name=browser_name)
     
     # Filter to only include dates before first_date
     historical_df = historical_df[historical_df['snapshot_date'] < pd.to_datetime(first_date)]
@@ -141,37 +155,56 @@ def add_historical_data(csv_file, target_start_date):
 
 if __name__ == '__main__':
     import sys
+    import argparse
+
     csv_file = "top100_weekly_data.csv"
-    
-    # Check for command line argument to add historical data
-    if len(sys.argv) > 1 and sys.argv[1] == "--add-historical":
-        # Add data from beginning of 2021
-        target_start = dt.date(2021, 1, 4)  # First Monday of 2021
-        add_historical_data(csv_file, target_start)
+
+    parser = argparse.ArgumentParser(description="Fetch CoinMarketCap historical weekly snapshots.")
+    parser.add_argument("--add-historical", action="store_true",
+                        help="Add historical data before the earliest date in the CSV (defaults to start of 2021).")
+    parser.add_argument("--add-historical-from", dest="add_hist_from", type=str, default=None,
+                        help="Add historical data starting from the given date (YYYY-MM-DD) up to just before current earliest date in CSV.")
+    parser.add_argument("--browser", type=str, default="firefox", choices=["firefox","chromium","webkit"],
+                        help="Browser engine to use for scraping (default: firefox)")
+    args = parser.parse_args()
+
+    # Branch: add historical data
+    if args.add_hist_from or args.add_historical:
+        if args.add_hist_from:
+            try:
+                y, m, d = map(int, args.add_hist_from.split("-"))
+                target_start = dt.date(y, m, d)
+            except Exception:
+                raise SystemExit("Invalid date for --add-historical-from. Use YYYY-MM-DD, e.g. 2017-01-02")
+        else:
+            # default historical backfill start
+            target_start = dt.date(2021, 1, 4)  # First Monday of 2021
+
+        add_historical_data(csv_file, target_start, browser_name=args.browser)
     else:
         # Normal operation - check for new data
         last_date = get_last_date_from_csv(csv_file)
-        
+
         if last_date:
             # Calculate next Monday after last date
             next_monday = last_date + dt.timedelta(days=(7 - last_date.weekday()) % 7)
             if next_monday == last_date:  # if last_date is already Monday
                 next_monday += dt.timedelta(days=7)
-            
+
             print(f"Existing data found. Last date: {last_date}")
             print(f"Fetching new data from: {next_monday}")
-            
+
             # Scrape only new data
-            new_df = scrape_historical(start_date=next_monday)
-            
+            new_df = scrape_historical(start_date=next_monday, browser_name=args.browser)
+
             if not new_df.empty:
                 # Load existing data and append new data
                 existing_df = pd.read_csv(csv_file)
                 existing_df['snapshot_date'] = pd.to_datetime(existing_df['snapshot_date'])
-                
+
                 combined_df = pd.concat([existing_df, new_df], ignore_index=True)
                 combined_df = combined_df.sort_values('snapshot_date').reset_index(drop=True)
-                
+
                 # Save combined data
                 combined_df.to_csv(csv_file, index=False)
                 print(f"Added {len(new_df)} new rows. Total rows: {len(combined_df)}")
@@ -180,6 +213,6 @@ if __name__ == '__main__':
         else:
             # No existing file, scrape all data
             print("No existing data found. Scraping all historical data...")
-            df = scrape_historical()
+            df = scrape_historical(browser_name=args.browser)
             df.to_csv(csv_file, index=False)
             print(f"Saved {len(df)} rows to {csv_file}")
