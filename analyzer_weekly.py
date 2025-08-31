@@ -12,6 +12,12 @@ import numpy as np
 from tabulate import tabulate
 import textwrap
 
+# Pretty printing helpers
+try:
+    from utils.pretty import section as pretty_section
+except Exception:
+    pretty_section = None
+
 # Import configuration
 from config.config import (
     EXCLUDED_SYMBOLS,
@@ -107,9 +113,12 @@ def load_and_prepare(csv_path: Path, start_date=None, end_date=None) -> pd.DataF
 
 def print_section(title, width=80):
     """Print a formatted section header."""
-    print("\n" + "-" * width)
-    print(f"{title:^{width}}")
-    print("-" * width)
+    if pretty_section:
+        pretty_section(title, width)
+    else:
+        print("\n" + "-" * width)
+        print(f"{title:^{width}}")
+        print("-" * width)
 
 
 def print_alt_portfolio_table(alt_data, weights, values, title):
