@@ -14,6 +14,8 @@ from tabulate import tabulate
 import asyncio
 import threading
 import os
+# Force plain ASCII-friendly output in captured logs so Streamlit renders it nicely
+os.environ.setdefault('PLAIN_OUTPUT', '1')
 
 # Import the analyzer functionality directly from analyzer_weekly
 from analyzer_weekly import (

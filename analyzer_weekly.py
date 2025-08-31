@@ -14,9 +14,10 @@ import textwrap
 
 # Pretty printing helpers
 try:
-    from utils.pretty import section as pretty_section
+    from utils.pretty import section as pretty_section, kv_table as pretty_kv_table
 except Exception:
     pretty_section = None
+    pretty_kv_table = None
 
 # Import configuration
 from config.config import (
@@ -119,6 +120,19 @@ def print_section(title, width=80):
         print("\n" + "-" * width)
         print(f"{title:^{width}}")
         print("-" * width)
+
+
+def print_kv(title: str, data: dict, width=80):
+    """Print key/value pairs in a compact table."""
+    if pretty_kv_table:
+        pretty_kv_table(data, title=title, width=width)
+    else:
+        print_section(title, width)
+        for k, v in data.items():
+            if isinstance(v, float):
+                print(f"{k}: {v:,.2f}")
+            else:
+                print(f"{k}: {v}")
 
 
 def print_alt_portfolio_table(alt_data, weights, values, title):
@@ -253,10 +267,8 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
 
     # ===== INITIALIZATION =====
     # Set up initial positions for week 0 to 1
-    print("\n\n")
-    print("┏" + "━" * 80 + "┓")
-    print(f"┃{'INITIAL PORTFOLIO SETUP':^80}┃")
-    print("┗" + "━" * 80 + "┛")
+    print("\n")
+    print_section("INITIAL PORTFOLIO SETUP", width=80)
     
     # Get data frames for first week (t0) and second week (t1)
     t0, t1 = weeks[0], weeks[1]
@@ -280,14 +292,16 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
     btc_qty = (btc_w * equity) / btc_price0
     btc_value = btc_qty * btc_price0
     
-    print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
-    print(f"│                         INITIAL BTC LONG POSITION                            │")
-    print("├─────────────────────────────────────────────────────────────────────────────┤")
-    print(f"│ SETUP FOR WEEK 1 ({pd.Timestamp(t0).strftime('%Y-%m-%d')}):                                         │")
-    print(f"│   BTC Price:            ${btc_price0:15,.2f} USD                                │")
-    print(f"│   BTC Quantity:         {btc_qty:15.6f} BTC   (Weight: {btc_w*100:.1f}%)           │")
-    print(f"│   BTC Position Value:   ${btc_value:15,.2f} USD                                │")
-    print("└─────────────────────────────────────────────────────────────────────────────┘")
+    print_kv(
+        "INITIAL BTC LONG POSITION",
+        {
+            "Setup Week 1": pd.Timestamp(t0).strftime('%Y-%m-%d'),
+            "BTC Price": f"${btc_price0:,.2f}",
+            "BTC Quantity": f"{btc_qty:.6f} BTC (Weight: {btc_w*100:.1f}%)",
+            "BTC Position Value": f"${btc_value:,.2f}",
+        },
+        width=80,
+    )
     
     # Store BTC position details
     if detailed_output:
@@ -315,14 +329,16 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
     # Select top_n altcoins by rank
     alts_df_t0 = filtered_w0.nsmallest(top_n, "rank") if not filtered_w0.empty else filtered_w0
     
-    print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
-    print(f"│                         INITIAL ALT SHORT POSITIONS                          │")
-    print("├─────────────────────────────────────────────────────────────────────────────┤")
-    print(f"│ SETUP FOR WEEK 1 ({pd.Timestamp(t0).strftime('%Y-%m-%d')}):                                         │")
-    print(f"│   Target Weight:        {alt_w*100:.1f}% of portfolio                              │")
-    print(f"│   Target Value:         ${alt_notional_usd_target:15,.2f} USD                                │")
-    print(f"│   Number of ALTs:       {top_n:15d}                                         │")
-    print("└─────────────────────────────────────────────────────────────────────────────┘")
+    print_kv(
+        "INITIAL ALT SHORT POSITIONS",
+        {
+            "Setup Week 1": pd.Timestamp(t0).strftime('%Y-%m-%d'),
+            "Target Weight": f"{alt_w*100:.1f}% of portfolio",
+            "Target Value": f"${alt_notional_usd_target:,.2f}",
+            "Number of ALTs": top_n,
+        },
+        width=80,
+    )
     
     if not alts_df_t0.empty:
         # Calculate weights based on market cap
@@ -418,12 +434,9 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         # Enhanced weekly header with BTC price info
         week_header = f"WEEK {i+1}: {pd.Timestamp(t0).strftime('%Y-%m-%d')} → {pd.Timestamp(t1).strftime('%Y-%m-%d')}"
         btc_header = f"BTC: ${btc_price0:,.2f} → ${btc_price1:,.2f} ({btc_change_pct:+.2f}%)"
-        print("\n\n")
-        print("┏" + "━" * 100 + "┓")
-        print(f"┃{week_header:^100}┃")
-        print(f"┃{btc_header:^100}┃")
-        print("┗" + "━" * 100 + "┛")
         print("\n")
+        print_section(week_header, width=100)
+        print(btc_header)
 
         # Validate BTC prices (already fetched above for header)
         try:
@@ -443,17 +456,17 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
 
         # ===== 1. DISPLAY PORTFOLIO AT START OF WEEK =====
         # Show positions that were established at the end of previous week
-        print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
-        print(f"│                    PORTFOLIO POSITIONS - WEEK {i+1} START                     │")
-        print("├─────────────────────────────────────────────────────────────────────────────┤")
-        print(f"│ DATE:                  {pd.Timestamp(t0).strftime('%Y-%m-%d')}                                           │")
-        print(f"│                                                                             │")
-        print(f"│ BTC position:          {btc_qty:15.6f} BTC @ ${btc_price0:,.2f} = ${btc_qty * btc_price0:,.2f}     │")
-        
         alt_total_value = sum(abs(v) for v in alt_notional_values.values())
-        print(f"│ ALT positions:         {len(alt_coin_quantities):15d} coins, total value: ${alt_total_value:,.2f}      │")
-        print(f"│ Total equity:          ${equity:15,.2f} USD                                  │")
-        print("└─────────────────────────────────────────────────────────────────────────────┘")
+        print_kv(
+            f"PORTFOLIO POSITIONS - WEEK {i+1} START",
+            {
+                "DATE": pd.Timestamp(t0).strftime('%Y-%m-%d'),
+                "BTC position": f"{btc_qty:.6f} BTC @ ${btc_price0:,.2f} = ${btc_qty * btc_price0:,.2f}",
+                "ALT positions": f"{len(alt_coin_quantities)} coins, total value: ${alt_total_value:,.2f}",
+                "Total equity": f"${equity:,.2f} USD",
+            },
+            width=100,
+        )
         
         # ===== 2. CALCULATE P&L FOR THIS WEEK =====
         
@@ -461,23 +474,21 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         btc_pnl_usd = btc_qty * (btc_price1 - btc_price0)
         btc_return_pct = ((btc_price1 - btc_price0) / btc_price0) * 100
         
-        print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
-        print(f"│                          BTC LONG POSITION                                   │")
-        print("├─────────────────────────────────────────────────────────────────────────────┤")
-        print(f"│ WEEK {i+1} START ({pd.Timestamp(t0).strftime('%Y-%m-%d')}):                                                │")
-        print(f"│   BTC Price:            ${btc_price0:15,.2f} USD                                │")
-        print(f"│   BTC Quantity:         {btc_qty:15.6f} BTC                                  │")
-        print(f"│   Position Value:       ${btc_qty * btc_price0:15,.2f} USD                                │")
-        print("├─────────────────────────────────────────────────────────────────────────────┤")
-        print(f"│ WEEK {i+1} END ({pd.Timestamp(t1).strftime('%Y-%m-%d')}):                                                  │")
-        print(f"│   BTC Price:            ${btc_price1:15,.2f} USD                                │")
-        print(f"│   Price Change:                               {btc_return_pct:+7.2f}%                   │")
-        print(f"│   BTC Quantity:         {btc_qty:15.6f} BTC     (unchanged during week)      │")
-        print(f"│   Position Value:       ${btc_qty * btc_price1:15,.2f} USD                                │")
-        print("├─────────────────────────────────────────────────────────────────────────────┤")
-        print(f"│ BTC POSITION RESULT:                                                         │")
-        print(f"│   Weekly P&L:           ${btc_pnl_usd:+15,.2f} USD                                │")
-        print("└─────────────────────────────────────────────────────────────────────────────┘")
+        print_kv(
+            f"BTC LONG POSITION - WEEK {i+1}",
+            {
+                "Start Date": pd.Timestamp(t0).strftime('%Y-%m-%d'),
+                "Start Price": f"${btc_price0:,.2f}",
+                "Quantity": f"{btc_qty:.6f} BTC",
+                "Start Value": f"${btc_qty * btc_price0:,.2f}",
+                "End Date": pd.Timestamp(t1).strftime('%Y-%m-%d'),
+                "End Price": f"${btc_price1:,.2f}",
+                "Price Change": f"{btc_return_pct:+.2f}%",
+                "End Value": f"${btc_qty * btc_price1:,.2f}",
+                "Weekly P&L": f"${btc_pnl_usd:+,.2f}",
+            },
+            width=100,
+        )
         
         # Store BTC position details at end of week
         if detailed_output:
@@ -611,12 +622,15 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                               stralign="right", numalign="right"))
                 
                 # Add summary row after table
-                print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
-                print(f"│ ALT SHORT POSITIONS RESULT:                                                  │")
-                print(f"│   Number of ALTs:       {len(alt_coin_quantities):15d}                                         │")
-                print(f"│   Total Position Value: ${sum(current_alt_values.values()):15,.2f} USD                                │")
-                print(f"│   Weekly P&L:           ${weekly_alt_pnl_usd:+15,.2f} USD                                │")
-                print("└─────────────────────────────────────────────────────────────────────────────┘")
+                print_kv(
+                    "ALT SHORT POSITIONS RESULT",
+                    {
+                        "Number of ALTs": len(alt_coin_quantities),
+                        "Total Position Value": f"${sum(current_alt_values.values()):,.2f}",
+                        "Weekly P&L": f"${weekly_alt_pnl_usd:+,.2f}",
+                    },
+                    width=100,
+                )
             else:
                 print("No valid ALT positions to display.")
         
@@ -630,22 +644,20 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         equity += total_weekly_pnl
         
         # Print week summary
-        print("\n\n")
-        print("┌─────────────────────────────────────────────────────────────────────────────┐")
-        print(f"│                       WEEK {i+1} RESULTS - END OF WEEK                       │")
-        print("├─────────────────────────────────────────────────────────────────────────────┤")
-        print(f"│ PORTFOLIO PERFORMANCE ({pd.Timestamp(t0).strftime('%Y-%m-%d')} - {pd.Timestamp(t1).strftime('%Y-%m-%d')}):                           │")
-        print(f"│   BTC Long P&L:        ${btc_pnl_usd:+15,.2f} USD                                │")
-        print(f"│   ALT Short P&L:       ${weekly_alt_pnl_usd:+15,.2f} USD                                │")
-        print(f"│   ───────────────────────────────────────────────────────────────────────  │")
-        print(f"│   TOTAL P&L:           ${total_weekly_pnl:+15,.2f} USD     (return: {weekly_return_pct:+7.2f}%)        │")
-        print("├─────────────────────────────────────────────────────────────────────────────┤")
-        print(f"│ UPDATED PORTFOLIO STATUS (AFTER P&L):                                        │")
-        print(f"│   Cumulative P&L:      ${cum_btc_pnl + cum_alt_pnl:+15,.2f} USD                                │")
-        print(f"│   Total equity:        ${equity:15,.2f} USD                                │")
-        print(f"│   BTC value:           ${btc_qty * btc_price1:15,.2f} USD     ({btc_qty * btc_price1/equity*100:6.2f}% of equity)    │")
-        print(f"│   ALT value:           ${sum(current_alt_values.values()):15,.2f} USD     ({sum(current_alt_values.values())/equity*100:6.2f}% of equity)    │")
-        print("└─────────────────────────────────────────────────────────────────────────────┘")
+        print_kv(
+            f"WEEK {i+1} RESULTS - END OF WEEK",
+            {
+                "Period": f"{pd.Timestamp(t0).strftime('%Y-%m-%d')} - {pd.Timestamp(t1).strftime('%Y-%m-%d')}",
+                "BTC Long P&L": f"${btc_pnl_usd:+,.2f}",
+                "ALT Short P&L": f"${weekly_alt_pnl_usd:+,.2f}",
+                "TOTAL P&L": f"${total_weekly_pnl:+,.2f} (return: {weekly_return_pct:+.2f}%)",
+                "Cumulative P&L": f"${cum_btc_pnl + cum_alt_pnl:+,.2f}",
+                "Total equity": f"${equity:,.2f}",
+                "BTC value": f"${btc_qty * btc_price1:,.2f} ({btc_qty * btc_price1/equity*100:.2f}% of equity)",
+                "ALT value": f"${sum(current_alt_values.values()):,.2f} ({sum(current_alt_values.values())/equity*100:.2f}% of equity)",
+            },
+            width=100,
+        )
         
         # Stop if equity invalid
         if equity <= 0 or pd.isna(equity):
@@ -682,37 +694,26 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
             target_alt_value = equity * alt_w
             
             # Print BTC rebalancing info
-            print("┌─────────────────────────────────────────────────────────────────────────────┐")
-            print(f"│                         BTC REBALANCING - NEXT WEEK                         │")
-            print("├─────────────────────────────────────────────────────────────────────────────┤")
-            print(f"│ CURRENT STATE BEFORE REBALANCING:                                           │")
-            print(f"│   • Total equity:        ${equity:15,.2f} USD                                │")
-            print(f"│   • BTC value:           ${btc_qty * btc_price1:15,.2f} USD = {btc_qty * btc_price1/equity*100:6.2f}% of equity    │")
-            print("├─────────────────────────────────────────────────────────────────────────────┤")
-            print(f"│ TARGET STATE AFTER REBALANCING:                                             │")
-            print(f"│   • Target BTC:          ${target_btc_value:15,.2f} USD = {btc_w*100:6.2f}% of equity    │")
-            print("├─────────────────────────────────────────────────────────────────────────────┤")
-            
-            # Calculate new BTC quantity using CURRENT week's end price (t1)
             current_btc_qty = btc_qty
             new_btc_qty = target_btc_value / btc_price1
-            
-            # Calculate percentage changes
             qty_change = new_btc_qty - current_btc_qty
             qty_change_pct = (qty_change / current_btc_qty) * 100 if current_btc_qty != 0 else 0
-            
-            print(f"│ NEW BTC POSITION CALCULATION:                                               │")
-            print(f"│   • Formula:             (Target % × Equity) ÷ Current BTC Price            │")
-            print(f"│   • Calculation:         ({btc_w:.2f} × ${equity:,.2f}) ÷ ${btc_price1:,.2f} = {new_btc_qty:.6f} BTC  │")
-            print("├─────────────────────────────────────────────────────────────────────────────┤")
-            print(f"│ REBALANCED BTC POSITION FOR WEEK {i+2}:                                       │")
-            print(f"│   • Current quantity:    {current_btc_qty:15.6f} BTC                                  │")
-            print(f"│   • New quantity:        {new_btc_qty:15.6f} BTC   (change: {qty_change:+.6f} BTC)    │")
-            print(f"│   • Current value:       ${current_btc_qty * btc_price1:15,.2f} USD = {current_btc_qty * btc_price1/equity*100:6.2f}% of equity    │")
-            print(f"│   • New value:           ${new_btc_qty * btc_price1:15,.2f} USD = {new_btc_qty * btc_price1/equity*100:6.2f}% of equity    │")
-            print(f"│                                                                             │")
-            print(f"│   Required position change: {qty_change:+15.6f} BTC    ({qty_change_pct:+7.2f}%)           │")
-            print("└─────────────────────────────────────────────────────────────────────────────┘")
+
+            print_kv(
+                f"BTC REBALANCING - NEXT WEEK (Week {i+2})",
+                {
+                    "Current equity": f"${equity:,.2f}",
+                    "Current BTC value": f"${current_btc_qty * btc_price1:,.2f} ({current_btc_qty * btc_price1/equity*100:.2f}% of equity)",
+                    "Target BTC": f"${target_btc_value:,.2f} ({btc_w*100:.2f}% of equity)",
+                    "Formula": "(Target % × Equity) ÷ Current BTC Price",
+                    "Calculation": f"({btc_w:.2f} × ${equity:,.2f}) ÷ ${btc_price1:,.2f} = {new_btc_qty:.6f} BTC",
+                    "Current quantity": f"{current_btc_qty:.6f} BTC",
+                    "New quantity": f"{new_btc_qty:.6f} BTC",
+                    "Required change": f"{qty_change:+.6f} BTC ({qty_change_pct:+.2f}%)",
+                    "New value": f"${new_btc_qty * btc_price1:,.2f} ({new_btc_qty * btc_price1/equity*100:.2f}% of equity)",
+                },
+                width=100,
+            )
             
             # Update BTC position for next week
             btc_qty = new_btc_qty
@@ -802,18 +803,17 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                     old_alt_value = sum(current_alt_values.values())
                     new_alt_value = sum(new_alt_values.values())
                     
-                    print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
-                    print(f"│                    ALT SHORT REBALANCING - NEXT WEEK                         │")
-                    print("├─────────────────────────────────────────────────────────────────────────────┤")
-                    print(f"│ ORIGINAL ALT POSITIONS:                                                      │")
-                    print(f"│   Number of ALTs:       {len(alt_coin_quantities):15d}                                         │")
-                    print(f"│   ALT Position Value:   ${old_alt_value:15,.2f} USD = {old_alt_value/equity*100:6.2f}% of equity    │")
-                    print("├─────────────────────────────────────────────────────────────────────────────┤")
-                    print(f"│ REBALANCED ALT POSITIONS:                                                    │")
-                    print(f"│   Number of ALTs:       {len(new_alt_coin_quantities):15d}                                         │")
-                    print(f"│   Target Value:         ${alt_notional_usd_target:15,.2f} USD = {alt_w*100:6.2f}% of equity    │")
-                    print(f"│   Actual Value:         ${new_alt_value:15,.2f} USD = {new_alt_value/equity*100:6.2f}% of equity    │")
-                    print("└─────────────────────────────────────────────────────────────────────────────┘")
+                    print_kv(
+                    "ALT SHORT REBALANCING - NEXT WEEK",
+                    {
+                        "Original #ALTs": len(alt_coin_quantities),
+                        "Original Value": f"${old_alt_value:,.2f} ({old_alt_value/equity*100:.2f}% of equity)",
+                        "New #ALTs": len(new_alt_coin_quantities),
+                        "Target Value": f"${alt_notional_usd_target:,.2f} ({alt_w*100:.2f}% of equity)",
+                        "Actual Value": f"${new_alt_value:,.2f} ({new_alt_value/equity*100:.2f}% of equity)",
+                    },
+                    width=100,
+                )
                     
                     # Update ALT positions for next week
                     alt_coin_quantities = new_alt_coin_quantities
@@ -830,15 +830,11 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                 alt_values.clear()
         else:
             # Last week - end of backtest
-            print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
-            print(f"│                       END OF BACKTEST - FINAL WEEK                           │")
-            print("└─────────────────────────────────────────────────────────────────────────────┘")
+            print_section("END OF BACKTEST - FINAL WEEK", width=80)
 
     # ===== FINAL SUMMARY =====
-    print("\n\n")
-    print("┏" + "━" * 80 + "┓")
-    print(f"┃{'BACKTEST RESULTS - FINAL SUMMARY':^80}┃")
-    print("┗" + "━" * 80 + "┛")
+    print("\n")
+    print_section("BACKTEST RESULTS - FINAL SUMMARY", width=80)
     print("\n")
     
     perf_df = pd.DataFrame(rows)
