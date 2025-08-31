@@ -39,7 +39,7 @@ def validate_benchmark_weights(weights: Dict[str, float]) -> Tuple[bool, str]:
 
 
 def calculate_benchmark_performance(df: pd.DataFrame, benchmark_weights: Dict[str, float], 
-                                  start_cap: float = 100000.0, rebalance_weekly: bool = False) -> pd.DataFrame:
+                                  start_cap: float = 100000.0, rebalance_weekly: bool | str = False) -> pd.DataFrame:
     """
     Calculate benchmark portfolio performance using buy-and-hold or rebalanced strategy.
     Aligns with strategy calculation method for consistent period counting.
@@ -48,8 +48,11 @@ def calculate_benchmark_performance(df: pd.DataFrame, benchmark_weights: Dict[st
         df: DataFrame with prepared cryptocurrency data
         benchmark_weights: Dictionary mapping asset symbols to their weights
         start_cap: Initial capital in USD
-        rebalance_weekly: If True, rebalance to target weights each week; if False, buy-and-hold
-        
+        rebalance_weekly: Backward-compatible flag or policy for rebalancing.
+                          - True or 'weekly'/'W': rebalance each week
+                          - 'monthly'/'M': rebalance at the first snapshot of a new month
+                          - False or 'none': buy-and-hold (weights drift)
+    
     Returns:
         DataFrame with benchmark performance data including detailed asset breakdowns
     """
@@ -57,6 +60,23 @@ def calculate_benchmark_performance(df: pd.DataFrame, benchmark_weights: Dict[st
     is_valid, error_msg = validate_benchmark_weights(benchmark_weights)
     if not is_valid:
         raise ValueError(f"Invalid benchmark weights: {error_msg}")
+    
+    # Normalize rebalance policy
+    def _normalize_policy(val) -> str:
+        if isinstance(val, bool):
+            return 'weekly' if val else 'none'
+        if isinstance(val, str):
+            v = val.strip().lower()
+            if v in ("true", "t", "yes", "y", "weekly", "w", "week"):
+                return "weekly"
+            if v in ("monthly", "m", "month"):
+                return "monthly"
+            if v in ("none", "no", "n", "hold", "buy&hold", "buy_hold", "buy-and-hold"):
+                return "none"
+        # Default
+        return "none"
+    
+    rebalance_policy = _normalize_policy(rebalance_weekly)
     
     # Get available weeks
     weeks = sorted(df["rebalance_ts"].unique())
@@ -72,7 +92,11 @@ def calculate_benchmark_performance(df: pd.DataFrame, benchmark_weights: Dict[st
     first_week = weeks[0]
     week_data = df[df["rebalance_ts"] == first_week].set_index("sym")
     
-    benchmark_type = "Weekly Rebalanced" if rebalance_weekly else "Buy & Hold"
+    benchmark_type = (
+        "Weekly Rebalanced" if rebalance_policy == "weekly" else
+        "Monthly Rebalanced" if rebalance_policy == "monthly" else
+        "Buy & Hold"
+    )
     print(f"\n=== BENCHMARK PORTFOLIO INITIALIZATION ({benchmark_type}) ===")
     print(f"Initial Capital: ${start_cap:,.2f}")
     print(f"Portfolio Composition:")
@@ -145,6 +169,9 @@ def calculate_benchmark_performance(df: pd.DataFrame, benchmark_weights: Dict[st
     
     benchmark_rows.append(initial_row_data)
     
+    # Prepare monthly tracking
+    last_rebalance_month = pd.Period(pd.Timestamp(first_week), freq='M')
+    
     # Process week-to-week transitions for performance tracking (align with strategy methodology)
     # NOTE: Strategy starts its performance DataFrame from t1 (end of first analyzed week)
     # We need to align benchmark to start from the same point for synchronized graphing
@@ -176,8 +203,18 @@ def calculate_benchmark_performance(df: pd.DataFrame, benchmark_weights: Dict[st
         # Calculate weekly return
         weekly_return_pct = ((portfolio_value - prev_portfolio_value) / prev_portfolio_value) * 100 if prev_portfolio_value > 0 else 0.0
         
+        # Decide if we should rebalance this step
+        do_rebalance = False
+        if rebalance_policy == "weekly":
+            do_rebalance = True
+        elif rebalance_policy == "monthly":
+            current_month = pd.Period(pd.Timestamp(next_week), freq='M')
+            if current_month != last_rebalance_month:
+                do_rebalance = True
+                last_rebalance_month = current_month
+        
         # Rebalance to target weights if requested
-        if rebalance_weekly:
+        if do_rebalance:
             rebalanced_positions = {}
             rebalanced_value = 0.0
             

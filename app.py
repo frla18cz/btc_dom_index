@@ -44,6 +44,11 @@ from config.config import (
     DEFAULT_BENCHMARK_WEIGHTS,
     BENCHMARK_REBALANCE_WEEKLY
 )
+# Optional new default policy (if available)
+try:
+    from config.config import BENCHMARK_REBALANCE_DEFAULT  # 'none' | 'weekly' | 'monthly'
+except Exception:
+    BENCHMARK_REBALANCE_DEFAULT = None
 
 # Import fetcher functions
 from fetcher import get_last_date_from_csv, scrape_historical, mondays
@@ -531,12 +536,21 @@ use_benchmark = st.sidebar.checkbox("Enable Benchmark Comparison", value=True)
 
 if use_benchmark:
     # Benchmark rebalancing strategy selection
-    benchmark_rebalance = st.sidebar.radio(
+    benchmark_rebalance_policy = st.sidebar.radio(
         "**Benchmark Strategy:**",
-        options=[False, True],
-        format_func=lambda x: "🏠 Buy & Hold (weights drift)" if not x else "⚖️ Weekly Rebalanced (maintain weights)",
-        index=0,  # Default to Buy & Hold
-        help="Buy & Hold: Initial weights drift over time based on performance.\nWeekly Rebalanced: Weights are reset to targets each week."
+        options=["none", "weekly", "monthly"],
+        format_func=lambda x: {
+            "none": "🏠 Buy & Hold (weights drift)",
+            "weekly": "⚖️ Weekly Rebalanced (maintain weights)",
+            "monthly": "🗓️ Monthly Rebalanced (maintain weights)"
+        }[x],
+        index=1,  # Default to Weekly
+        help=(
+            "Buy & Hold: Initial weights drift over time based on performance.\n"
+            "Weekly Rebalanced: Weights are reset to targets each week.\n"
+            "Monthly Rebalanced: Weights are reset to targets at the start of each month."
+        ),
+        key="benchmark_rebalance_policy"
     )
     
     st.sidebar.write("**Select Assets and Weights:**")
@@ -663,7 +677,7 @@ if run_backtest:
             
             # Validate benchmark weights if benchmark is enabled
             benchmark_weights_final = None
-            benchmark_rebalance_final = False  # Default value if benchmark is not used
+            benchmark_rebalance_policy_final = None  # Default value if benchmark is not used
             if use_benchmark and benchmark_weights:
                 is_valid, error_msg = validate_benchmark_weights(benchmark_weights)
                 if not is_valid:
@@ -671,7 +685,12 @@ if run_backtest:
                     st.stop()
                 else:
                     benchmark_weights_final = benchmark_weights
-                    benchmark_rebalance_final = benchmark_rebalance
+                    # Use selected policy; if not present fall back to config
+                    benchmark_rebalance_policy_final = (
+                        benchmark_rebalance_policy if 'benchmark_rebalance_policy' in st.session_state else (
+                            BENCHMARK_REBALANCE_DEFAULT if BENCHMARK_REBALANCE_DEFAULT is not None else ('weekly' if BENCHMARK_REBALANCE_WEEKLY else 'none')
+                        )
+                    )
             
             # Run backtest
             st.info("Running backtest...")
@@ -686,7 +705,7 @@ if run_backtest:
                 start_cap=initial_capital,
                 detailed_output=True,
                 benchmark_weights=benchmark_weights_final,
-                benchmark_rebalance_weekly=benchmark_rebalance_final if use_benchmark else None,
+                benchmark_rebalance=benchmark_rebalance_policy_final if use_benchmark else None,
             )
             
             # Restore stdout

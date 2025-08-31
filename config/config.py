@@ -58,5 +58,7 @@ DEFAULT_BENCHMARK_WEIGHTS = {
     'ETH': 0.5,
 }
 
-# Benchmark rebalancing strategy
+# Benchmark rebalancing strategy (legacy flag; kept for backward compatibility)
 BENCHMARK_REBALANCE_WEEKLY = False  # If True, rebalance to target weights weekly; if False, buy-and-hold
+# New default policy for benchmark rebalancing: 'none' | 'weekly' | 'monthly'
+BENCHMARK_REBALANCE_DEFAULT = 'weekly'

@@ -24,6 +24,11 @@ from config.config import (
     DEFAULT_BENCHMARK_WEIGHTS,
     BENCHMARK_REBALANCE_WEEKLY
 )
+# Optional new default policy (if available)
+try:
+    from config.config import BENCHMARK_REBALANCE_DEFAULT  # 'none' | 'weekly' | 'monthly'
+except Exception:
+    BENCHMARK_REBALANCE_DEFAULT = None
 
 # Configuration with defaults from config.py
 CSV_PATH = Path("top100_weekly_data.csv")
@@ -182,7 +187,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                               start_cap: float = START_CAP,
                               detailed_output: bool = True,
                               benchmark_weights: dict = None,
-                              benchmark_rebalance_weekly: bool = None) -> tuple[pd.DataFrame, dict, pd.DataFrame, pd.DataFrame, dict]:
+                              benchmark_rebalance: str | bool | None = None) -> tuple[pd.DataFrame, dict, pd.DataFrame, pd.DataFrame, dict]:
     """
     Backtest the BTC long vs ALT short strategy.
     
@@ -195,7 +200,10 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         start_cap: Initial capital in USD
         detailed_output: Whether to save detailed weekly position data
         benchmark_weights: Optional dict of benchmark asset weights for comparison
-        benchmark_rebalance_weekly: If True, benchmark rebalances weekly; if False, buy-and-hold; if None, use config default
+        benchmark_rebalance: Rebalancing policy for benchmark. Accepts:
+            - 'weekly' or True: rebalance each week
+            - 'monthly': rebalance at the start of each month
+            - 'none' or False or None: buy-and-hold (weights drift); if None, use config default
         
     Returns:
         Tuple of (performance DataFrame, summary dictionary, detailed_positions DataFrame, 
@@ -859,14 +867,21 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
     if benchmark_weights:
         try:
             # Use provided parameter or fall back to config default
-            rebalance_weekly = benchmark_rebalance_weekly if benchmark_rebalance_weekly is not None else BENCHMARK_REBALANCE_WEEKLY
+            if benchmark_rebalance is not None:
+                rebalance_policy = benchmark_rebalance
+            else:
+                # Prefer new default if available; else map legacy boolean to policy
+                if BENCHMARK_REBALANCE_DEFAULT is not None:
+                    rebalance_policy = BENCHMARK_REBALANCE_DEFAULT
+                else:
+                    rebalance_policy = 'weekly' if BENCHMARK_REBALANCE_WEEKLY else 'none'
             
             # Create filtered dataset for benchmark that matches the strategy analysis period
             # The strategy uses weeks[0] to weeks[-1], so benchmark should use the same period
             benchmark_weeks = weeks
             filtered_df_for_benchmark = df[df["rebalance_ts"].isin(benchmark_weeks)]
             
-            benchmark_df = calculate_benchmark_performance(filtered_df_for_benchmark, benchmark_weights, start_cap, rebalance_weekly)
+            benchmark_df = calculate_benchmark_performance(filtered_df_for_benchmark, benchmark_weights, start_cap, rebalance_policy)
             if not benchmark_df.empty:
                 benchmark_comparison = compare_strategy_vs_benchmark(perf_df, benchmark_df, summary, start_cap)
                 print(f"\n┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓")
