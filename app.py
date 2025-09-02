@@ -497,6 +497,52 @@ alt_weight = st.sidebar.slider(
     format="%.2f",
 )
 
+# FNG dynamic allocation controls
+st.sidebar.subheader("Fear & Greed Dynamic Allocation")
+enable_fng_dynamic = st.sidebar.checkbox("Enable FNG-based dynamic weights", value=False,
+    help="When enabled, weekly BTC/ALT weights are determined by the Fear & Greed value for that week (bins of 10).")
+
+fng_policy_options = ["tuesday_lookahead", "monday", "sunday", "friday"]
+fng_policy_labels = {
+    "tuesday_lookahead": "Tuesday LOOKAHEAD (assign Tue to Mon)",
+    "monday": "Monday (no lookahead)",
+    "sunday": "Sunday→Monday (trailing)",
+    "friday": "Friday→Monday (extra trailing)"
+}
+selected_fng_policy = "tuesday_lookahead"
+
+fng_bins_df = None
+if enable_fng_dynamic:
+    selected_fng_policy = st.sidebar.selectbox(
+        "FNG Alignment Policy",
+        options=fng_policy_options,
+        format_func=lambda k: fng_policy_labels.get(k, k),
+        index=0,
+        help=(
+            "tuesday_lookahead intentionally assigns Tuesday's FNG to Monday (LOOKAHEAD). "
+            "Use 'monday' for causally correct alignment, 'sunday'/'friday' for conservative trailing."
+        ),
+    )
+
+    import pandas as pd
+    # Prepare default bin table (0..90 step 10)
+    default_bins = list(range(0, 100, 10))
+    fng_bins_df = pd.DataFrame({
+        "FNG_bin_start": default_bins,
+        "BTC_w": [btc_weight for _ in default_bins],
+        "ALT_w": [alt_weight for _ in default_bins],
+    })
+    st.sidebar.caption("Edit weights for each 10-point FNG bin (values are in leverage ×, e.g., 1.75 = 175%)")
+    fng_bins_df = st.sidebar.data_editor(
+        fng_bins_df,
+        num_rows="fixed",
+        hide_index=True,
+        use_container_width=True,
+    )
+    # Quick sanity note if lookahead active
+    if selected_fng_policy == "tuesday_lookahead":
+        st.sidebar.warning("LOOKAHEAD aktivní: k pondělí se přiřazuje úterý. Výsledky mohou být nadhodnocené.")
+
 # Check if total leverage exceeds 3.0 (300%)
 total_leverage = btc_weight + alt_weight
 if total_leverage > 3.0:
@@ -650,8 +696,11 @@ if run_backtest:
         start_dt = dt.datetime.combine(start_date, dt.time(0, 0))
         end_dt = dt.datetime.combine(end_date, dt.time(23, 59))
         
-        # Load data
-        df = load_and_prepare(csv_path, start_dt, end_dt)
+# Load data
+        if enable_fng_dynamic:
+            df = load_and_prepare(csv_path, start_dt, end_dt, include_fng=True, fng_policy=selected_fng_policy)
+        else:
+            df = load_and_prepare(csv_path, start_dt, end_dt)
         progress_bar.progress(30)
         
         if df.empty:
@@ -698,6 +747,18 @@ if run_backtest:
             st.info("Running backtest...")
             progress_bar.progress(50)
             
+# Build FNG mapping from editor
+            fng_bins_map = None
+            if enable_fng_dynamic and fng_bins_df is not None and not fng_bins_df.empty:
+                try:
+                    fng_bins_map = {
+                        int(row["FNG_bin_start"]): {"btc_w": float(row["BTC_w"]), "alt_w": float(row["ALT_w"])}
+                        for _, row in fng_bins_df.iterrows()
+                    }
+                except Exception as e:
+                    st.warning(f"Could not parse FNG bins table: {e}. Falling back to static weights.")
+                    fng_bins_map = None
+
             perf, summary, detailed, benchmark_df, benchmark_comparison = backtest_rank_altbtc_short(
                 df,
                 btc_w=btc_weight,
@@ -708,6 +769,8 @@ if run_backtest:
                 detailed_output=True,
                 benchmark_weights=benchmark_weights_final,
                 benchmark_rebalance=benchmark_rebalance_policy_final if use_benchmark else None,
+                fng_weight_bins=fng_bins_map,
+                fng_missing_fallback="static",
             )
             
             # Restore stdout
@@ -1129,16 +1192,18 @@ if run_backtest:
                         quality_df = pd.DataFrame(quality_checks, columns=["Check", "Status", "Details"])
                         st.dataframe(quality_df, hide_index=True, use_container_width=True)
                         
-                        # Raw data configuration summary
+# Raw data configuration summary
                         st.write("**Configuration Summary:**")
                         config_data = [
                             ["Initial Capital", f"${initial_capital:,.2f}"],
-                            ["BTC Weight", f"{btc_weight:.1%}"],
-                            ["ALT Weight", f"{alt_weight:.1%}"],
-                            ["Total Leverage", f"{btc_weight + alt_weight:.2f}x"],
+                            ["BTC Weight (default)", f"{btc_weight:.1%}"],
+                            ["ALT Weight (default)", f"{alt_weight:.1%}"],
+                            ["Total Leverage (default)", f"{btc_weight + alt_weight:.2f}x"],
                             ["ALT Basket Size", f"{top_n_alts} assets"],
                             ["Date Range", f"{start_date} to {end_date}"],
-                            ["Excluded Tokens", f"{len(excluded_tokens)} excluded"]
+                            ["Excluded Tokens", f"{len(excluded_tokens)} excluded"],
+                            ["FNG Dynamic Enabled", "Yes" if enable_fng_dynamic else "No"],
+                            ["FNG Policy", selected_fng_policy if enable_fng_dynamic else "—"],
                         ]
                         config_df = pd.DataFrame(config_data, columns=["Parameter", "Value"])
                         st.dataframe(config_df, hide_index=True, use_container_width=True)

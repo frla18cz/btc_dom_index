@@ -242,14 +242,16 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                               start_cap: float = START_CAP,
                               detailed_output: bool = True,
                               benchmark_weights: dict = None,
-                              benchmark_rebalance: str | bool | None = None) -> tuple[pd.DataFrame, dict, pd.DataFrame, pd.DataFrame, dict]:
+                              benchmark_rebalance: str | bool | None = None,
+                              fng_weight_bins: dict | None = None,
+                              fng_missing_fallback: str = "static") -> tuple[pd.DataFrame, dict, pd.DataFrame, pd.DataFrame, dict]:
     """
     Backtest the BTC long vs ALT short strategy.
     
     Args:
         df: DataFrame with prepared cryptocurrency data
-        btc_w: Weight of BTC position (0-1)
-        alt_w: Weight of ALT position (0-1)
+        btc_w: Default weight of BTC position (0-1)
+        alt_w: Default weight of ALT position (0-1)
         top_n: Number of top altcoins to include in the short basket
         excluded: List of symbols to exclude from the short basket
         start_cap: Initial capital in USD
@@ -259,6 +261,10 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
             - 'weekly' or True: rebalance each week
             - 'monthly': rebalance at the start of each month
             - 'none' or False or None: buy-and-hold (weights drift); if None, use config default
+        fng_weight_bins: Optional mapping {bin_start: {"btc_w": float, "alt_w": float}} with bin_start in {0,10,...,90}.
+                         If provided, weights are chosen per week based on that week's FNG value.
+        fng_missing_fallback: How to handle missing FNG ('static' to use default btc_w/alt_w,
+                             'carry' to carry last used dynamic weights).
         
     Returns:
         Tuple of (performance DataFrame, summary dictionary, detailed_positions DataFrame, 
@@ -270,6 +276,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
     # Import benchmark analyzer functions
     from benchmark_analyzer import calculate_benchmark_performance, compare_strategy_vs_benchmark, print_benchmark_breakdown
         
+    # Determine initial weights from FNG at first week
     weeks = sorted(df["rebalance_ts"].unique())
     if len(weeks) < 2:
         print("Not enough weeks for backtest")
@@ -289,9 +296,46 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
     detailed_positions = []
     cum_btc_pnl = cum_alt_pnl = 0.0
     
-    # Calculate total leverage
+    # Helper: resolve weights from FNG value using bins
+    def _weights_from_fng(val: float | int | None, prev_weights: tuple[float, float] | None = None) -> tuple[float, float]:
+        if fng_weight_bins is None or val is None or pd.isna(val):
+            if fng_missing_fallback == "carry" and prev_weights is not None:
+                return prev_weights
+            return btc_w, alt_w
+        try:
+            v = float(val)
+            # Map 100 to 90-bin
+            if v >= 100:
+                bin_start = 90
+            elif v < 0:
+                bin_start = 0
+            else:
+                bin_start = int(v // 10) * 10
+            # Find exact bin key if provided as strings/ints
+            # Normalize keys to int
+            norm_bins = {int(k): v for k, v in fng_weight_bins.items()}
+            w_conf = norm_bins.get(bin_start)
+            if not w_conf:
+                # Fallback to closest lower bin that exists
+                candidates = [b for b in norm_bins.keys() if b <= bin_start]
+                if candidates:
+                    w_conf = norm_bins[max(candidates)]
+                else:
+                    w_conf = {"btc_w": btc_w, "alt_w": alt_w}
+            return float(w_conf.get("btc_w", btc_w)), float(w_conf.get("alt_w", alt_w))
+        except Exception:
+            return btc_w, alt_w
+
+    # Determine initial weights from FNG at first week
+    weeks = sorted(df["rebalance_ts"].unique())
+    
+    # Calculate total leverage (based on defaults; may vary dynamically week-to-week)
     total_leverage = btc_w + alt_w
-    print(f"\n========== BACKTEST: {btc_w*100:.1f}% BTC + {alt_w*100:.1f}% ALT Short (Top {top_n}) ==========")
+    print(f"\n========== BACKTEST (Top {top_n}) ==========")
+    if fng_weight_bins:
+        print("Dynamic weights by FNG enabled (per 10-point bins). Defaults used when missing.")
+    else:
+        print(f"Static weights: {btc_w*100:.1f}% BTC + {alt_w*100:.1f}% ALT Short (Total {total_leverage:.2f}x)")
     print(f"Date Range: {pd.Timestamp(weeks[0]).date()} to {pd.Timestamp(weeks[-1]).date()}")
     print(f"Total Leverage: {total_leverage:.2f}x")
     print(f"Excluded Tokens: {', '.join(sorted(excluded))}")
@@ -305,6 +349,26 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
     # Get data frames for first week (t0) and second week (t1)
     t0, t1 = weeks[0], weeks[1]
     w0 = df[df.rebalance_ts == t0].set_index('sym')
+
+    # Determine initial dynamic weights
+    fng_t0 = None
+    if 'fng_value' in w0.columns:
+        try:
+            fng_t0 = float(w0['fng_value'].dropna().iloc[0]) if not w0['fng_value'].dropna().empty else None
+        except Exception:
+            fng_t0 = None
+    cur_btc_w, cur_alt_w = _weights_from_fng(fng_t0, prev_weights=None)
+    print_kv(
+        "WEIGHT POLICY - INITIAL WEEK",
+        {
+            "Week": pd.Timestamp(t0).strftime('%Y-%m-%d'),
+            "FNG": f"{fng_t0:.0f}" if fng_t0 is not None and not pd.isna(fng_t0) else "N/A",
+            "BTC_w": f"{cur_btc_w*100:.1f}%",
+            "ALT_w": f"{cur_alt_w*100:.1f}%",
+            "Total Leverage": f"{cur_btc_w + cur_alt_w:.2f}x",
+        },
+        width=80,
+    )
     
     # Check if we have BTC price for the first week
     try:
@@ -321,7 +385,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         return pd.DataFrame(), {}, pd.DataFrame(), pd.DataFrame(), {}
     
     # 1. Calculate initial BTC position
-    btc_qty = (btc_w * equity) / btc_price0
+    btc_qty = (cur_btc_w * equity) / btc_price0
     btc_value = btc_qty * btc_price0
     
     print_kv(
@@ -329,7 +393,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         {
             "Setup Week 1": pd.Timestamp(t0).strftime('%Y-%m-%d'),
             "BTC Price": f"${btc_price0:,.2f}",
-            "BTC Quantity": f"{btc_qty:.6f} BTC (Weight: {btc_w*100:.1f}%)",
+            "BTC Quantity": f"{btc_qty:.6f} BTC (Weight: {cur_btc_w*100:.1f}%)",
             "BTC Position Value": f"${btc_value:,.2f}",
         },
         width=80,
@@ -350,7 +414,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
     
     # 2. Calculate initial ALT short positions
     # Target value for all short positions combined
-    alt_notional_usd_target = alt_w * equity
+    alt_notional_usd_target = cur_alt_w * equity
     
     # Apply excluded symbols filter 
     filtered_w0 = w0[~w0.index.isin(excluded)]
@@ -365,7 +429,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         "INITIAL ALT SHORT POSITIONS",
         {
             "Setup Week 1": pd.Timestamp(t0).strftime('%Y-%m-%d'),
-            "Target Weight": f"{alt_w*100:.1f}% of portfolio",
+            "Target Weight": f"{cur_alt_w*100:.1f}% of portfolio",
             "Target Value": f"${alt_notional_usd_target:,.2f}",
             "Number of ALTs": top_n,
         },
@@ -441,7 +505,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         "BTC_Price_USD": btc_price0,
         "BtcQty": btc_qty,
         "BtcHold_USD": btc_qty * btc_price0,
-        "AltShortTarget_USD": alt_w * start_cap,
+        "AltShortTarget_USD": cur_alt_w * start_cap,
         "AltShortActual_USD": initial_alt_value,
         "AltShortCount": len(alt_coin_quantities),
         "Weekly_BTC_PNL_USD": 0.0,
@@ -716,14 +780,33 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
         # Check if we should proceed with rebalancing
         if i < len(weeks) - 2:  # Don't rebalance after the last week
             # ===== 4. REBALANCE POSITIONS FOR NEXT WEEK =====
+            # Resolve weights for next week using FNG at t1
+            fng_t1 = None
+            if 'fng_value' in w1.columns:
+                try:
+                    fng_t1 = float(w1['fng_value'].dropna().iloc[0]) if not w1['fng_value'].dropna().empty else None
+                except Exception:
+                    fng_t1 = None
+            next_btc_w, next_alt_w = _weights_from_fng(fng_t1, prev_weights=(cur_btc_w, cur_alt_w))
+            print_kv(
+                f"WEIGHT POLICY - NEXT WEEK (Week {i+2})",
+                {
+                    "Week": pd.Timestamp(t1).strftime('%Y-%m-%d'),
+                    "FNG": f"{fng_t1:.0f}" if fng_t1 is not None and not pd.isna(fng_t1) else "N/A",
+                    "BTC_w": f"{next_btc_w*100:.1f}%",
+                    "ALT_w": f"{next_alt_w*100:.1f}%",
+                    "Total Leverage": f"{next_btc_w + next_alt_w:.2f}x",
+                },
+                width=100,
+            )
             print("\n┌─────────────────────────────────────────────────────────────────────────────┐")
             print(f"│                  REBALANCING FOR WEEK {i+2}                                   │")
             print("└─────────────────────────────────────────────────────────────────────────────┘")
             print("\n")
             
             # 4.1 Rebalance BTC position
-            target_btc_value = equity * btc_w
-            target_alt_value = equity * alt_w
+            target_btc_value = equity * next_btc_w
+            target_alt_value = equity * next_alt_w
             
             # Print BTC rebalancing info
             current_btc_qty = btc_qty
@@ -736,9 +819,9 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                 {
                     "Current equity": f"${equity:,.2f}",
                     "Current BTC value": f"${current_btc_qty * btc_price1:,.2f} ({current_btc_qty * btc_price1/equity*100:.2f}% of equity)",
-                    "Target BTC": f"${target_btc_value:,.2f} ({btc_w*100:.2f}% of equity)",
+                    "Target BTC": f"${target_btc_value:,.2f} ({next_btc_w*100:.2f}% of equity)",
                     "Formula": "(Target % × Equity) ÷ Current BTC Price",
-                    "Calculation": f"({btc_w:.2f} × ${equity:,.2f}) ÷ ${btc_price1:,.2f} = {new_btc_qty:.6f} BTC",
+                    "Calculation": f"({next_btc_w:.2f} × ${equity:,.2f}) ÷ ${btc_price1:,.2f} = {new_btc_qty:.6f} BTC",
                     "Current quantity": f"{current_btc_qty:.6f} BTC",
                     "New quantity": f"{new_btc_qty:.6f} BTC",
                     "Required change": f"{qty_change:+.6f} BTC ({qty_change_pct:+.2f}%)",
@@ -751,7 +834,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
             btc_qty = new_btc_qty
             
             # 4.2 Rebalance ALT shorts using CURRENT week's data (t1)
-            alt_notional_usd_target = alt_w * equity
+            alt_notional_usd_target = next_alt_w * equity
             
             # Apply filter for excluded symbols
             filtered_w1 = w1[~w1.index.isin(excluded)]
@@ -841,7 +924,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                         "Original #ALTs": len(alt_coin_quantities),
                         "Original Value": f"${old_alt_value:,.2f} ({old_alt_value/equity*100:.2f}% of equity)",
                         "New #ALTs": len(new_alt_coin_quantities),
-                        "Target Value": f"${alt_notional_usd_target:,.2f} ({alt_w*100:.2f}% of equity)",
+                        "Target Value": f"${alt_notional_usd_target:,.2f} ({next_alt_w*100:.2f}% of equity)",
                         "Actual Value": f"${new_alt_value:,.2f} ({new_alt_value/equity*100:.2f}% of equity)",
                     },
                     width=100,
@@ -852,6 +935,8 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                     alt_notional_values = new_alt_notional_values
                     alt_weights = new_alt_weights
                     alt_values = new_alt_values
+                    # Update current weights for subsequent loop
+                    cur_btc_w, cur_alt_w = next_btc_w, next_alt_w
                 else:
                     print("No valid ALTs in rebalanced basket.")
             else:
