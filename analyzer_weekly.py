@@ -53,18 +53,32 @@ REPORTS_DIR = Path("reports")
 OVERWRITE_REPORTS = True
 
 
-def load_and_prepare(csv_path: Path, start_date=None, end_date=None) -> pd.DataFrame:
+def load_and_prepare(csv_path: Path, start_date=None, end_date=None,
+                      include_fng: bool = False,
+                      fng_csv_path: Path | str = Path("data/fng_daily.csv"),
+                      fng_policy: str = "tuesday_lookahead") -> pd.DataFrame:
     """
-    Load CSV from csv_path, clean numeric columns, compute price_btc and mcap_btc columns.
-    Optionally filters data by date range.
-    
+    Načte CSV, vyčistí numerické sloupce, spočítá price_btc a mcap_btc a volitelně přimíchá FNG.
+
+    Zarovnání FNG (fng_policy):
+        - 'monday': pondělní FNG k pondělnímu EOD (bez lookaheadu; FNG je známé od 00:00 UTC)
+        - 'sunday': neděle k pondělí (striktně trailing)
+        - 'friday': pátek k pondělí (extra trailing)
+        - 'tuesday_lookahead': úterý k pondělí (ÚMYSLNÝ LOOKAHEAD; vědomé porušení kauzality)
+
+    POZNÁMKA: 'tuesday_lookahead' umožňuje použít pro pondělní rozhodnutí hodnotu, která vzniká
+    až na začátku úterý. Je to požadavek uživatele kvůli minimalizaci zpoždění vůči CMC EOD.
+
     Args:
-        csv_path: Path to the CSV file
-        start_date: Optional start date to filter data (inclusive)
-        end_date: Optional end date to filter data (inclusive)
-        
+        csv_path: cesta k CSV souboru s CMC historickými snapshoty
+        start_date: volitelný začátek filtru (včetně)
+        end_date: volitelný konec filtru (včetně)
+        include_fng: pokud True, přidá weekly FNG sloupce
+        fng_csv_path: cesta k dennímu FNG CSV
+        fng_policy: viz výše – defaultně 'tuesday_lookahead' na výslovné přání
+
     Returns:
-        DataFrame compatible with backtest_rank_altbtc_short.
+        DataFrame kompatibilní s backtest_rank_altbtc_short.
     """
     df = pd.read_csv(csv_path)
     # parse date
@@ -107,6 +121,24 @@ def load_and_prepare(csv_path: Path, start_date=None, end_date=None) -> pd.DataF
     df["mcap_btc"] = df["market_cap_usd"] / df["btc_price_usd"]
     # ensure rank integer
     df["rank"] = df["rank"].astype(int)
+
+    # Optionally merge weekly FNG values
+    if include_fng:
+        try:
+            from indicators.fng import load_fng_daily_csv, daily_to_weekly
+            fng_daily = load_fng_daily_csv(Path(fng_csv_path))
+            fng_weekly = daily_to_weekly(fng_daily, policy=fng_policy)
+            # Explicitní log o zvolené politice
+            print("\n[FNG] Zarovnání politiky:")
+            print(f"- fng_policy = {fng_policy}")
+            if fng_policy == "tuesday_lookahead":
+                print("- POZOR: K pondělí přiřazujeme úterní hodnotu FNG (ÚMYSLNÝ LOOKAHEAD).")
+                print("  Tato volba je na výslovné přání a může nadhodnotit backtest výsledky.")
+            # Merge na pondělní timestamps (rebalance_ts)
+            df = df.merge(fng_weekly, how="left", left_on="rebalance_ts", right_on="rebalance_ts")
+        except Exception as e:
+            print(f"Warning: Could not merge FNG data: {e}")
+    
     # drop rows lacking key data
     df = df.dropna(subset=["rebalance_ts", "sym", "btc_price_usd", "price_usd", "price_btc", "mcap_btc", "rank"])
     return df
