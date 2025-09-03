@@ -123,7 +123,7 @@ def daily_to_weekly(df_daily: pd.DataFrame, policy: Literal["monday", "sunday", 
     if policy == "tuesday_lookahead":
         print("\n[WARNING] FNG policy 'tuesday_lookahead' je zapnuta.")
         print("→ K pondělí se přiřazuje úterní hodnota FNG. Jedná se o ÚMYSLNÝ LOOKAHEAD.")
-        print("→ Výsledky backtestu mohou být optimističtější než v reálu. Používejte vědomě.\n")
+        print("→ Může vzniknout drobný časový rozdíl v řádu vteřin (technický LOOKAHEAD).\n")
 
     # Obecný posun (kladný = trailing, záporný = lookahead)
     s_shifted = s.shift(shift_days) if shift_days != 0 else s

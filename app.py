@@ -44,7 +44,8 @@ from config.config import (
     BACKTEST_TOP_N_ALTS,
     BENCHMARK_AVAILABLE_ASSETS,
     DEFAULT_BENCHMARK_WEIGHTS,
-    BENCHMARK_REBALANCE_WEEKLY
+    BENCHMARK_REBALANCE_WEEKLY,
+    BACKTEST_ALT_MIN_SHARE_PER_ALT,
 )
 # Optional new default policy (if available)
 try:
@@ -540,8 +541,8 @@ if enable_fng_dynamic:
         use_container_width=True,
     )
     # Quick sanity note if lookahead active
-    if selected_fng_policy == "tuesday_lookahead":
-        st.sidebar.warning("LOOKAHEAD aktivní: k pondělí se přiřazuje úterý. Výsledky mohou být nadhodnocené.")
+if selected_fng_policy == "tuesday_lookahead":
+        st.sidebar.warning("POZOR: je aktivní politika LOOKAHEAD. K pondělí se přiřazuje úterní hodnota – může vzniknout rozdíl v řádu vteřin.")
 
 # Check if total leverage exceeds 3.0 (300%)
 total_leverage = btc_weight + alt_weight
@@ -562,6 +563,19 @@ top_n_alts = st.sidebar.slider(
     max_value=50,
     value=BACKTEST_TOP_N_ALTS,
     step=1,
+)
+
+# Minimum fixed share per ALT (as a % of total portfolio)
+min_share_per_alt_pct = st.sidebar.slider(
+    "Min share per ALT (of portfolio, %)",
+    min_value=0.0,
+    max_value=10.0,
+    value=float(BACKTEST_ALT_MIN_SHARE_PER_ALT) * 100.0,
+    step=0.5,
+    help=(
+        "Floor per ALT expressed as % of total portfolio. Example: TOP 10, ALT weight 75%, min 5% → "
+        "50% split equally (10×5%), remaining 25% by market cap. If N×min > ALT weight, min is scaled to ALT/N."
+    ),
 )
 
 # Benchmark Configuration
@@ -771,6 +785,7 @@ if run_backtest:
                 benchmark_rebalance=benchmark_rebalance_policy_final if use_benchmark else None,
                 fng_weight_bins=fng_bins_map,
                 fng_missing_fallback="static",
+                alt_min_share_per_alt=min_share_per_alt_pct / 100.0,
             )
             
             # Restore stdout
@@ -1198,6 +1213,7 @@ if run_backtest:
                             ["Initial Capital", f"${initial_capital:,.2f}"],
                             ["BTC Weight (default)", f"{btc_weight:.1%}"],
                             ["ALT Weight (default)", f"{alt_weight:.1%}"],
+                            ["Min per ALT (portfolio)", f"{min_share_per_alt_pct:.1f}%"],
                             ["Total Leverage (default)", f"{btc_weight + alt_weight:.2f}x"],
                             ["ALT Basket Size", f"{top_n_alts} assets"],
                             ["Date Range", f"{start_date} to {end_date}"],

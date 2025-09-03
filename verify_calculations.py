@@ -37,7 +37,7 @@ def main():
         top_n=10,
         start_cap=100000.0,
         benchmark_weights=benchmark_weights,
-        benchmark_rebalance_weekly=False,
+        benchmark_rebalance='none',
         detailed_output=False
     )
 

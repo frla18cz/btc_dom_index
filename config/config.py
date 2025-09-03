@@ -44,6 +44,11 @@ BACKTEST_INITIAL_CAPITAL = 100_000.0  # Starting capital in USD
 BACKTEST_BTC_WEIGHT = 1.75           # Weight of BTC in the portfolio (0-3)
 BACKTEST_ALT_WEIGHT = 0.75           # Weight of alts in the portfolio (0-3)
 BACKTEST_TOP_N_ALTS = 10            # Number of top alts to include in the short basket
+# Minimum floor (per ALT) as a fraction of total portfolio (0.0 .. 1.0)
+# Example: For TOP_N=10, ALT weight = 0.75 and BACKTEST_ALT_MIN_SHARE_PER_ALT=0.05 →
+#          10×5% = 50% of portfolio is split equally across ALTs, remaining 25% by market cap.
+# If N * min_share exceeds ALT weight, the min per ALT is auto-scaled to ALT weight / N.
+BACKTEST_ALT_MIN_SHARE_PER_ALT = 0.0
 
 # --- Benchmark Configuration ---
 # Available assets for benchmark composition
