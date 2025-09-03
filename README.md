@@ -12,6 +12,7 @@ This project implements a comprehensive cryptocurrency trading strategy backtest
 - **Risk Metrics**: Sharpe ratio, drawdown analysis, and correlation metrics
 - **Smart Data Management**: Automatic detection and fetching of missing data periods
 - **Verified Calculations**: All calculations have been thoroughly tested and verified
+- **Per-ALT Minimum Share Floor**: Optional minimum share per each ALT in the short basket (with automatic scaling if N×min > ALT weight)
 
 ## Strategy Logic
 
@@ -74,6 +75,7 @@ The web interface provides:
 - **Visual performance charts**
 - **Benchmark comparison**
 - **Detailed performance metrics**
+- **Min per ALT slider**: "Min share per ALT (of portfolio, %)" that enforces a per-ALT floor and splits the ALT leg as: floor equally + remainder by market cap
 
 ## Configuration
 
@@ -82,6 +84,7 @@ Key parameters can be configured in `config/config.py`:
 - `BACKTEST_BTC_WEIGHT`: BTC allocation percentage (default: 50%)
 - `BACKTEST_ALT_WEIGHT`: ALT short allocation percentage (default: 50%)
 - `BACKTEST_TOP_N_ALTS`: Number of altcoins in short basket (default: 10)
+- `BACKTEST_ALT_MIN_SHARE_PER_ALT`: Per-ALT minimum as a fraction of total portfolio (default: 0.0). Example: TOP 10, ALT weight = 0.75, min per ALT = 0.05 → 10×5% = 50% equally split; the remaining 25% is distributed by market cap. If N×min exceeds ALT weight, the min is auto-scaled to ALT weight / N.
 - `EXCLUDED_SYMBOLS`: Tokens to exclude from analysis
 - `BENCHMARK_WEIGHTS`: Custom benchmark portfolio weights
 

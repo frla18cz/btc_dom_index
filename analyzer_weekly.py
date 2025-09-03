@@ -29,7 +29,8 @@ from config.config import (
     BACKTEST_ALT_WEIGHT,
     BACKTEST_TOP_N_ALTS,
     DEFAULT_BENCHMARK_WEIGHTS,
-    BENCHMARK_REBALANCE_WEEKLY
+    BENCHMARK_REBALANCE_WEEKLY,
+    BACKTEST_ALT_MIN_SHARE_PER_ALT,
 )
 # Optional new default policy (if available)
 try:
@@ -44,6 +45,8 @@ BTC_W = BACKTEST_BTC_WEIGHT
 ALT_W = BACKTEST_ALT_WEIGHT
 TOP_N = BACKTEST_TOP_N_ALTS
 EXCLUDED = EXCLUDED_SYMBOLS
+# Per-ALT minimum share of total portfolio (0.0..1.0)
+ALT_MIN_PER_ALT = BACKTEST_ALT_MIN_SHARE_PER_ALT
 # Date range for backtesting
 START_DATE = BACKTEST_START_DATE
 END_DATE = BACKTEST_END_DATE
@@ -133,7 +136,7 @@ def load_and_prepare(csv_path: Path, start_date=None, end_date=None,
             print(f"- fng_policy = {fng_policy}")
             if fng_policy == "tuesday_lookahead":
                 print("- POZOR: K pondělí přiřazujeme úterní hodnotu FNG (ÚMYSLNÝ LOOKAHEAD).")
-                print("  Tato volba je na výslovné přání a může nadhodnotit backtest výsledky.")
+                print("  Tato volba je na výslovné přání – může vzniknout rozdíl v řádu vteřin.")
             # Merge na pondělní timestamps (rebalance_ts)
             df = df.merge(fng_weekly, how="left", left_on="rebalance_ts", right_on="rebalance_ts")
         except Exception as e:
@@ -244,7 +247,8 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                               benchmark_weights: dict = None,
                               benchmark_rebalance: str | bool | None = None,
                               fng_weight_bins: dict | None = None,
-                              fng_missing_fallback: str = "static") -> tuple[pd.DataFrame, dict, pd.DataFrame, pd.DataFrame, dict]:
+                              fng_missing_fallback: str = "static",
+                              alt_min_share_per_alt: float | None = None) -> tuple[pd.DataFrame, dict, pd.DataFrame, pd.DataFrame, dict]:
     """
     Backtest the BTC long vs ALT short strategy.
     
@@ -272,6 +276,11 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
     """
     if excluded is None:
         excluded = EXCLUDED
+    # Default per-ALT minimum share from config, if not provided
+    if alt_min_share_per_alt is None:
+        alt_min_share_per_alt = ALT_MIN_PER_ALT
+    # Ensure non-negative
+    alt_min_share_per_alt = max(0.0, float(alt_min_share_per_alt))
     
     # Import benchmark analyzer functions
     from benchmark_analyzer import calculate_benchmark_performance, compare_strategy_vs_benchmark, print_benchmark_breakdown
@@ -405,7 +414,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
             "Date": pd.Timestamp(t0),
             "Symbol": "BTC",
             "Type": "LONG",
-            "Weight": btc_w,
+            "Weight": cur_btc_w,
             "Quantity": btc_qty,
             "Price_USD": btc_price0,
             "Value_USD": btc_value,
@@ -432,37 +441,49 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
             "Target Weight": f"{cur_alt_w*100:.1f}% of portfolio",
             "Target Value": f"${alt_notional_usd_target:,.2f}",
             "Number of ALTs": top_n,
+            "Min per ALT (portfolio)": f"{alt_min_share_per_alt*100:.2f}%",
         },
         width=80,
     )
     
     if not alts_df_t0.empty:
-        # Calculate weights based on market cap
+        # Calculate weights based on market cap with per-ALT minimum floor
+        alt_count = len(alts_df_t0)
         tot_mcap = alts_df_t0["mcap_btc"].sum()
         
-        if tot_mcap > 0 and not pd.isna(tot_mcap):
+        # Compute floor and remainder (all as fractions of total portfolio)
+        base_equal_total_w = min(cur_alt_w, alt_min_share_per_alt * alt_count)
+        scaled_min_w_per_alt = (base_equal_total_w / alt_count) if alt_count > 0 else 0.0
+        remainder_w = max(0.0, cur_alt_w - base_equal_total_w)
+        
+        if (alt_min_share_per_alt * alt_count) > cur_alt_w + 1e-12:
+            print(f"Note: Per-ALT minimum ({alt_min_share_per_alt*100:.2f}%) scaled down to {scaled_min_w_per_alt*100:.2f}% due to ALT weight constraint.")
+        
+        if (tot_mcap > 0) and (not pd.isna(tot_mcap)):
             alt_data = {}  # For tabular display
             
             for sym, r in alts_df_t0.iterrows():
                 if pd.isna(r.price_usd) or r.price_usd == 0:
                     continue
-                    
-                # Calculate weight proportional to market cap
-                weight = r.mcap_btc / tot_mcap
-                alt_weights[sym] = weight
                 
-                # Calculate target USD value for this altcoin
-                target_usd_value = alt_notional_usd_target * weight
+                # Within-basket market-cap weight
+                mcap_w = (r.mcap_btc / tot_mcap) if tot_mcap > 0 else (1.0 / alt_count if alt_count > 0 else 0.0)
                 
-                # Calculate negative quantity (short position)
-                # IMPORTANT: We use t0 prices to calculate quantities for week 1
+                # Overall portfolio share for this ALT (floor + cap-weighted remainder)
+                portfolio_w = scaled_min_w_per_alt + remainder_w * mcap_w
+                alt_weights[sym] = portfolio_w
+                
+                # Target USD value for this ALT based on portfolio weight
+                target_usd_value = equity * portfolio_w
+                
+                # Short quantity using t0 price
                 coin_qty = -target_usd_value / r.price_usd
                 alt_coin_quantities[sym] = coin_qty
                 
-                # Store notional USD value (negative for shorts)
+                # Notional USD value (negative for shorts)
                 alt_notional_values[sym] = -target_usd_value
                 
-                # Store position USD value (absolute value)
+                # Absolute USD exposure
                 alt_values[sym] = abs(alt_notional_values[sym])
                 
                 # Store data for display
@@ -474,7 +495,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                     'mcap_btc': r.mcap_btc,
                     'target_usd': target_usd_value,
                     'actual_usd': alt_values[sym],
-                    'weight': weight
+                    'weight': portfolio_w
                 }
                 
                 # Store detailed position data
@@ -483,7 +504,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                         "Date": pd.Timestamp(t0),
                         "Symbol": sym,
                         "Type": "SHORT",
-                        "Weight": weight,
+                        "Weight": portfolio_w,
                         "Quantity": coin_qty,
                         "Price_USD": r.price_usd,
                         "Value_USD": abs(alt_notional_values[sym]),
@@ -493,7 +514,40 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
             # Print the ALT positions table
             print_alt_portfolio_table(alt_data, alt_weights, alt_values, "ALT SHORT BASKET COMPOSITION")
         else:
-            print("No valid market cap data for ALTs. Cannot initialize short positions.")
+            # Fallback: equal-weight the entire ALT leg if market caps invalid
+            alt_data = {}
+            for sym, r in alts_df_t0.iterrows():
+                if pd.isna(r.price_usd) or r.price_usd == 0:
+                    continue
+                portfolio_w = cur_alt_w / alt_count if alt_count > 0 else 0.0
+                alt_weights[sym] = portfolio_w
+                target_usd_value = equity * portfolio_w
+                coin_qty = -target_usd_value / r.price_usd
+                alt_coin_quantities[sym] = coin_qty
+                alt_notional_values[sym] = -target_usd_value
+                alt_values[sym] = abs(alt_notional_values[sym])
+                alt_data[sym] = {
+                    'rank': r.rank,
+                    'qty': coin_qty,
+                    'price_usd': r.price_usd,
+                    'price_btc': r.price_btc,
+                    'mcap_btc': r.mcap_btc,
+                    'target_usd': target_usd_value,
+                    'actual_usd': alt_values[sym],
+                    'weight': portfolio_w
+                }
+                if detailed_output:
+                    detailed_positions.append({
+                        "Date": pd.Timestamp(t0),
+                        "Symbol": sym,
+                        "Type": "SHORT",
+                        "Weight": portfolio_w,
+                        "Quantity": coin_qty,
+                        "Price_USD": r.price_usd,
+                        "Value_USD": abs(alt_notional_values[sym]),
+                        "PnL_USD": 0.0
+                    })
+            print_alt_portfolio_table(alt_data, alt_weights, alt_values, "ALT SHORT BASKET COMPOSITION (EQUAL-WEIGHT FALLBACK)")
     else:
         print("No ALTs available after filtering. No short positions initialized.")
     
@@ -592,7 +646,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                 "Date": pd.Timestamp(t1),
                 "Symbol": "BTC",
                 "Type": "LONG",
-                "Weight": btc_w,
+                "Weight": cur_btc_w,
                 "Quantity": btc_qty,
                 "Price_USD": btc_price1,
                 "Value_USD": btc_qty * btc_price1,
@@ -614,6 +668,8 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
             weekly_alt_pnl_usd = 0.0
             current_alt_values = {}
             
+            # Precompute sum of ALT target weights to show % of basket rather than % of portfolio
+            sum_alt_weight = sum(alt_weights.values()) if alt_weights else 0.0
             for sym, coin_qty in alt_coin_quantities.items():
                 if sym in w0.index and sym in w1.index:
                     # Get prices for this period
@@ -621,10 +677,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                     end_price = w1.at[sym, "price_usd"]
                     rank = w1.at[sym, "rank"]
                     
-                    # For shorts: profit when price goes down, loss when price goes up
-                    
-                    # P&L calculation for this period
-                    # For a short position (coin_qty is negative): profit when price decreases
+                    # P&L calculation for this period (shorts profit when price decreases)
                     pnl_usd = (start_price - end_price) * abs(coin_qty)
                     weekly_alt_pnl_usd += pnl_usd
                     
@@ -634,6 +687,9 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                     
                     # Calculate percentage change in price
                     price_change_pct = ((end_price - start_price) / start_price) * 100
+                    
+                    # Compute target weight as % of ALT basket for display
+                    target_weight_pct = (alt_weights.get(sym, 0.0) / sum_alt_weight * 100) if sum_alt_weight > 0 else 0.0
                     
                     # Add to data for table display
                     alt_pnl_data.append([
@@ -646,7 +702,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                         market_value,           # Position Value (USD)
                         market_value / sum(current_alt_values.values()) * 100 if sum(current_alt_values.values()) > 0 else 0,  # % of Basket
                         pnl_usd,                # P&L (USD)
-                        alt_weights.get(sym, 0) * 100  # Target Weight %
+                        target_weight_pct       # Target Weight % (within ALT basket)
                     ])
                     
                     # Store detailed position data at end of week
@@ -767,7 +823,7 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
             "BTC_Price_USD": btc_price1,
             "BtcQty": btc_qty,
             "BtcHold_USD": btc_qty * btc_price1,
-            "AltShortTarget_USD": alt_w * equity,
+            "AltShortTarget_USD": cur_alt_w * equity,
             "AltShortActual_USD": sum(current_alt_values.values()) if current_alt_values else 0,
             "AltShortCount": len(alt_coin_quantities),
             "Weekly_BTC_PNL_USD": btc_pnl_usd,
@@ -876,6 +932,14 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
             
             if not alts_df_t1.empty:
                 tot_mcap = alts_df_t1["mcap_btc"].sum()
+                alt_count_next = len(alts_df_t1)
+                
+                # Compute floor and remainder for next week's ALT leg
+                base_equal_total_w_next = min(next_alt_w, alt_min_share_per_alt * alt_count_next)
+                scaled_min_w_per_alt_next = (base_equal_total_w_next / alt_count_next) if alt_count_next > 0 else 0.0
+                remainder_w_next = max(0.0, next_alt_w - base_equal_total_w_next)
+                if (alt_min_share_per_alt * alt_count_next) > next_alt_w + 1e-12:
+                    print(f"Note: Next week per-ALT minimum ({alt_min_share_per_alt*100:.2f}%) scaled to {scaled_min_w_per_alt_next*100:.2f}% due to ALT weight constraint.")
                 
                 if tot_mcap > 0 and not pd.isna(tot_mcap):
                     # Calculate new quantities
@@ -883,22 +947,24 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                     
                     for sym, r in alts_df_t1.iterrows():
                         if not pd.isna(r.price_usd) and r.price_usd != 0 and not pd.isna(r.mcap_btc):
-                            # Calculate weight based on market cap using CURRENT week data
-                            weight = r.mcap_btc / tot_mcap
-                            new_alt_weights[sym] = weight
+                            # Within-basket market-cap weight for next week
+                            mcap_w_next = (r.mcap_btc / tot_mcap) if tot_mcap > 0 else (1.0 / alt_count_next if alt_count_next > 0 else 0.0)
                             
-                            # Calculate target USD value for this altcoin
-                            target_usd_value = alt_notional_usd_target * weight
+                            # Overall portfolio share for this ALT next week
+                            portfolio_w_next = scaled_min_w_per_alt_next + remainder_w_next * mcap_w_next
+                            new_alt_weights[sym] = portfolio_w_next
                             
-                            # IMPORTANT: Calculate coin quantity using CURRENT WEEK prices (t1)
-                            # This is for next week's positions
+                            # Target USD value based on portfolio share
+                            target_usd_value = equity * portfolio_w_next
+                            
+                            # Quantity using t1 price for next week's positions
                             coin_qty = -target_usd_value / r.price_usd
                             new_alt_coin_quantities[sym] = coin_qty
                             
-                            # Store notional USD value (negative for short)
+                            # Notional USD value (negative for short)
                             new_alt_notional_values[sym] = -target_usd_value
                             
-                            # Store position value (absolute)
+                            # Position value (absolute)
                             new_alt_values[sym] = abs(new_alt_notional_values[sym])
                             
                             # Store data for display
@@ -913,8 +979,30 @@ def backtest_rank_altbtc_short(df: pd.DataFrame,
                     # Print rebalanced portfolio
                     if alt_data:
                         print_alt_portfolio_table(alt_data, new_alt_weights, new_alt_values, "REBALANCED ALT SHORT BASKET")
-                    
-                    # Summary of rebalancing
+                else:
+                    # Fallback equal-weight rebalancing if market caps invalid
+                    alt_data = {}
+                    for sym, r in alts_df_t1.iterrows():
+                        if not pd.isna(r.price_usd) and r.price_usd != 0:
+                            portfolio_w_next = next_alt_w / alt_count_next if alt_count_next > 0 else 0.0
+                            new_alt_weights[sym] = portfolio_w_next
+                            target_usd_value = equity * portfolio_w_next
+                            coin_qty = -target_usd_value / r.price_usd
+                            new_alt_coin_quantities[sym] = coin_qty
+                            new_alt_notional_values[sym] = -target_usd_value
+                            new_alt_values[sym] = abs(new_alt_notional_values[sym])
+                            alt_data[sym] = {
+                                'rank': r.rank,
+                                'qty': coin_qty,
+                                'price_usd': r.price_usd,
+                                'price_btc': r.price_btc,
+                                'mcap_btc': r.mcap_btc
+                            }
+                    if alt_data:
+                        print_alt_portfolio_table(alt_data, new_alt_weights, new_alt_values, "REBALANCED ALT SHORT BASKET (EQUAL-WEIGHT FALLBACK)")
+                
+                # Summary of rebalancing (only if we actually created positions)
+                if new_alt_coin_quantities:
                     old_alt_value = sum(current_alt_values.values())
                     new_alt_value = sum(new_alt_values.values())
                     
