@@ -34,7 +34,7 @@ def test_benchmark_chart():
         top_n=10,
         start_cap=initial_capital,
         benchmark_weights={'BTC': 1.0},
-        benchmark_rebalance_weekly=False,
+        benchmark_rebalance=False,
         detailed_output=False
     )
     

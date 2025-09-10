@@ -159,4 +159,4 @@ This software is for educational and research purposes only. Cryptocurrency trad
 
 ## Contributing
 
-[Specify contribution guidelines here]
+Please see CONTRIBUTING.md for how to set up your environment, run tests, and open pull requests. For detailed conventions (structure, commands, style, and security notes), read AGENTS.md.

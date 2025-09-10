@@ -33,7 +33,7 @@ def test_chart_baseline():
             top_n=10,
             start_cap=initial_capital,
             benchmark_weights={'BTC': 1.0},
-            benchmark_rebalance_weekly=False,
+            benchmark_rebalance=False,
             detailed_output=False
         )
         
