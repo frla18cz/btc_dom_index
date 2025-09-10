@@ -559,7 +559,26 @@ if enable_fng_dynamic:
             "Curve shape",
             options=["Linear", "Ease-in", "Ease-out", "S-curve"],
             index=0,
+            help=(
+                "Linear: rovnoměrný přechod (f(t)=t).\n"
+                "Ease-in: pomalý start, rychlý konec (f(t)=t²).\n"
+                "Ease-out: rychlý start, pozvolné dojetí (f(t)=1−(1−t)²).\n"
+                "S-curve: plynulé S, méně citlivé u krajů (f(t)=t²·(3−2t))."
+            ),
         )
+
+        # Learn more link and shape legend
+        st.sidebar.caption(
+            "📘 Learn more: FNG Dynamic Allocation Guide – "
+            "[docs/FNG_DYNAMIC_ALLOCATION.md](https://github.com/frla18cz/btc_dom_index/blob/feature/fng-designer/docs/FNG_DYNAMIC_ALLOCATION.md)"
+        )
+        with st.sidebar.expander("What does curve shape do?"):
+            st.markdown(
+                "- Linear: rovnoměrné změny.\n"
+                "- Ease-in: konzervativní v nízkém FNG, agresivnější ve vysokém.\n"
+                "- Ease-out: rychlá reakce při nízkém FNG, stabilizace ve vysokém.\n"
+                "- S-curve: plynulý průběh s menší citlivostí u krajů."
+            )
 
         if design_mode == "Lock total leverage":
             total_lev = st.sidebar.slider(
@@ -705,18 +724,49 @@ if use_benchmark:
     )
     
     st.sidebar.write("**Select Assets and Weights:**")
-    
-    # Quick preset buttons
+
+    # Determine which preset (if any) is currently active to style buttons accordingly
+    btc_val = st.session_state.get("benchmark_btc")
+    eth_val = st.session_state.get("benchmark_eth")
+
+    def _is_zero_or_unset(val) -> bool:
+        return val is None or abs(float(val)) < 1e-9
+
+    # Check if all non-BTC assets are zero/unset
+    others_zero_for_100 = all(
+        _is_zero_or_unset(st.session_state.get(f"benchmark_{asset.lower()}"))
+        for asset in available_assets
+        if asset != "BTC"
+    )
+    # Check if all non-BTC/ETH assets are zero/unset
+    others_zero_for_5050 = all(
+        _is_zero_or_unset(st.session_state.get(f"benchmark_{asset.lower()}"))
+        for asset in available_assets
+        if asset not in ("BTC", "ETH")
+    )
+
+    is_100_btc_active = (
+        btc_val is not None and abs(float(btc_val) - 100.0) < 1e-9 and others_zero_for_100
+    )
+    is_5050_active = (
+        btc_val is not None and abs(float(btc_val) - 50.0) < 1e-9
+        and eth_val is not None and abs(float(eth_val) - 50.0) < 1e-9
+        and others_zero_for_5050
+    )
+
+    # Quick preset buttons with dynamic highlighting: only the active one is primary (red)
     col1, col2 = st.sidebar.columns(2)
     with col1:
-        if st.button("💰 100% BTC", help="Set 100% BTC", type="secondary"):
+        btn_type_100 = "primary" if is_100_btc_active else "secondary"
+        if st.button("💰 100% BTC", help="Set 100% BTC", type=btn_type_100):
             st.session_state.benchmark_btc = 100.0
             for asset in available_assets[1:]:  # Reset others
                 st.session_state[f"benchmark_{asset.lower()}"] = 0.0
             st.rerun()
-    
+
     with col2:
-        if st.button("⚖️ 50/50 BTC/ETH", help="Set 50% BTC, 50% ETH", type="primary"):
+        btn_type_5050 = "primary" if is_5050_active else "secondary"
+        if st.button("⚖️ 50/50 BTC/ETH", help="Set 50% BTC, 50% ETH", type=btn_type_5050):
             st.session_state.benchmark_btc = 50.0
             st.session_state.benchmark_eth = 50.0
             for asset in available_assets[2:]:  # Reset others
