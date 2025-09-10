@@ -570,7 +570,7 @@ if enable_fng_dynamic:
         # Learn more link and shape legend
         st.sidebar.caption(
             "📘 Learn more: FNG Dynamic Allocation Guide – "
-            "[docs/FNG_DYNAMIC_ALLOCATION.md](https://github.com/frla18cz/btc_dom_index/blob/feature/fng-designer/docs/FNG_DYNAMIC_ALLOCATION.md)"
+            "[docs/FNG_DYNAMIC_ALLOCATION.md](https://github.com/frla18cz/btc_dom_index/blob/main/docs/FNG_DYNAMIC_ALLOCATION.md)"
         )
         with st.sidebar.expander("What does curve shape do?"):
             st.markdown(
