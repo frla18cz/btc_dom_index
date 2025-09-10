@@ -20,6 +20,14 @@ Tento průvodce vysvětluje, jak v aplikaci navrhovat dynamické váhy BTC/ALT p
 - Curve shape: tvar interpolace mezi endpointy – Linear, Ease‑in, Ease‑out, S‑curve.
 - Náhled: malý line chart v sidebaru ukazuje průběh `BTC_w` a `ALT_w` přes biny 0..90.
 
+### Curve Shapes – vysvětlení a kdy je použít
+- Linear: přímé, rovnoměrné přechody (vzorec: f(t)=t). Vhodné jako výchozí volba.
+- Ease‑in: pomalý začátek, rychlejší konec (f(t)=t²). Víc konzervativní v nízkém FNG, agresivnější ve vysokém.
+- Ease‑out: rychlý začátek, pozvolné dojezdy (f(t)=1−(1−t)²). Rychle reaguje při nízkém FNG, stabilizuje se ve vysokém.
+- S‑curve: plynulé „S“ (smoothstep f(t)=t²·(3−2t)). Menší citlivost u krajů, jemnější střed.
+
+Tip: t je normalizovaná hodnota v rozmezí 0..1 od FNG=0 do FNG=90. `BTC_w = BTC_low + (BTC_high−BTC_low)·f(t)`, obdobně pro `ALT_w`.
+
 ## Postup krok za krokem
 1. V sidebaru zapněte „Enable FNG‑based Dynamic Allocation“.
 2. Zapněte „Use Quick Designer (recommended)“.
