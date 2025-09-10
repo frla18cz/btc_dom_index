@@ -76,6 +76,7 @@ The web interface provides:
 - **Benchmark comparison**
 - **Detailed performance metrics**
 - **Min per ALT slider**: "Min share per ALT (of portfolio, %)" that enforces a per-ALT floor and splits the ALT leg as: floor equally + remainder by market cap
+ - **FNG Dynamic Allocation (Quick Designer)**: Intuitivní návrhář dynamických vah podle Fear & Greed Indexu (endpoints, curve shape, náhled + pokročilý editor tabulky). Viz `docs/FNG_DYNAMIC_ALLOCATION.md`.
 
 ## Configuration
 
