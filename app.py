@@ -553,12 +553,25 @@ if enable_fng_dynamic:
             "Design mode",
             options=["Lock total leverage", "Independent weights"],
             index=0,
+            key="designer_design_mode",
             help="Lock keeps BTC_w + ALT_w constant across FNG bins.",
         )
+
+        def _shape_label(x: str) -> str:
+            labels = {
+                "Linear": "➖ Linear",
+                "Ease-in": "⤴︎ Ease‑in",
+                "Ease-out": "⤵︎ Ease‑out",
+                "S-curve": "∿ S‑curve",
+            }
+            return labels.get(x, x)
+
         shape = st.sidebar.selectbox(
             "Curve shape",
             options=["Linear", "Ease-in", "Ease-out", "S-curve"],
             index=0,
+            key="designer_shape",
+            format_func=_shape_label,
             help=(
                 "Linear: rovnoměrný přechod (f(t)=t).\n"
                 "Ease-in: pomalý start, rychlý konec (f(t)=t²).\n"
@@ -581,31 +594,42 @@ if enable_fng_dynamic:
             )
 
         if design_mode == "Lock total leverage":
+            default_total = st.session_state.get("designer_total_lev", float(btc_weight + alt_weight))
             total_lev = st.sidebar.slider(
                 "Total leverage (BTC+ALT, ×)", min_value=0.0, max_value=3.0,
-                value=float(btc_weight + alt_weight), step=0.05
+                value=float(default_total), step=0.05, key="designer_total_lev"
             )
+            default_btc_low = st.session_state.get("designer_btc_low", float(min(btc_weight, total_lev)))
+            default_btc_high = st.session_state.get("designer_btc_high", float(min(max(btc_weight, 0.0), total_lev)))
             btc_low = st.sidebar.slider(
                 "BTC at FNG=0", min_value=0.0, max_value=float(total_lev),
-                value=float(min(btc_weight, total_lev)), step=0.05
+                value=float(min(default_btc_low, total_lev)), step=0.05, key="designer_btc_low"
             )
             btc_high = st.sidebar.slider(
                 "BTC at FNG=90", min_value=0.0, max_value=float(total_lev),
-                value=float(min(max(btc_weight, 0.0), total_lev)), step=0.05
+                value=float(min(default_btc_high, total_lev)), step=0.05, key="designer_btc_high"
             )
             alt_low, alt_high = total_lev - btc_low, total_lev - btc_high
         else:
+            default_btc_low = st.session_state.get("designer_btc_low", float(btc_weight))
+            default_btc_high = st.session_state.get("designer_btc_high", float(btc_weight))
+            default_alt_low = st.session_state.get("designer_alt_low", float(alt_weight))
+            default_alt_high = st.session_state.get("designer_alt_high", float(alt_weight))
             btc_low = st.sidebar.slider(
-                "BTC at FNG=0", min_value=0.0, max_value=3.0, value=float(btc_weight), step=0.05
+                "BTC at FNG=0", min_value=0.0, max_value=3.0,
+                value=float(default_btc_low), step=0.05, key="designer_btc_low"
             )
             btc_high = st.sidebar.slider(
-                "BTC at FNG=90", min_value=0.0, max_value=3.0, value=float(btc_weight), step=0.05
+                "BTC at FNG=90", min_value=0.0, max_value=3.0,
+                value=float(default_btc_high), step=0.05, key="designer_btc_high"
             )
             alt_low = st.sidebar.slider(
-                "ALT at FNG=0", min_value=0.0, max_value=3.0, value=float(alt_weight), step=0.05
+                "ALT at FNG=0", min_value=0.0, max_value=3.0,
+                value=float(default_alt_low), step=0.05, key="designer_alt_low"
             )
             alt_high = st.sidebar.slider(
-                "ALT at FNG=90", min_value=0.0, max_value=3.0, value=float(alt_weight), step=0.05
+                "ALT at FNG=90", min_value=0.0, max_value=3.0,
+                value=float(default_alt_high), step=0.05, key="designer_alt_high"
             )
 
         # Build bins from designer
@@ -618,6 +642,48 @@ if enable_fng_dynamic:
             alt_w_b = alt_low + (alt_high - alt_low) * tt
             rows.append({"FNG_bin_start": b, "BTC_w": round(btc_w_b, 4), "ALT_w": round(alt_w_b, 4)})
         fng_bins_df = pd.DataFrame(rows)
+
+        # Presets
+        col_p1, col_p2, col_p3 = st.sidebar.columns(3)
+        with col_p1:
+            if st.button("🛡️ Defenzivní", type="secondary", help="Nižší páka při nízkém FNG, mírný růst ALT ve vysokém FNG."):
+                st.session_state["designer_shape"] = "S-curve"
+                if st.session_state.get("designer_design_mode", "Lock total leverage") == "Lock total leverage":
+                    st.session_state["designer_total_lev"] = 2.0
+                    st.session_state["designer_btc_low"] = 1.75
+                    st.session_state["designer_btc_high"] = 1.25
+                else:
+                    st.session_state["designer_btc_low"] = 1.5
+                    st.session_state["designer_btc_high"] = 1.25
+                    st.session_state["designer_alt_low"] = 0.5
+                    st.session_state["designer_alt_high"] = 0.75
+                st.rerun()
+        with col_p2:
+            if st.button("⚖️ Neutrální", type="secondary", help="Střední páka a stabilní váhy napříč FNG."):
+                st.session_state["designer_shape"] = "Linear"
+                if st.session_state.get("designer_design_mode", "Lock total leverage") == "Lock total leverage":
+                    st.session_state["designer_total_lev"] = 2.5
+                    st.session_state["designer_btc_low"] = 1.5
+                    st.session_state["designer_btc_high"] = 1.5
+                else:
+                    st.session_state["designer_btc_low"] = 1.5
+                    st.session_state["designer_btc_high"] = 1.5
+                    st.session_state["designer_alt_low"] = 1.0
+                    st.session_state["designer_alt_high"] = 1.0
+                st.rerun()
+        with col_p3:
+            if st.button("🚀 Agresivní", type="secondary", help="Vyšší páka/ALT ve vysokém FNG (nebo dle zvoleného režimu)."):
+                st.session_state["designer_shape"] = "Ease-out"
+                if st.session_state.get("designer_design_mode", "Lock total leverage") == "Lock total leverage":
+                    st.session_state["designer_total_lev"] = 2.5
+                    st.session_state["designer_btc_low"] = 1.75
+                    st.session_state["designer_btc_high"] = 1.25
+                else:
+                    st.session_state["designer_btc_low"] = 1.25
+                    st.session_state["designer_btc_high"] = 1.0
+                    st.session_state["designer_alt_low"] = 1.25
+                    st.session_state["designer_alt_high"] = 1.5
+                st.rerun()
 
         # Preview chart
         prev = fng_bins_df.set_index("FNG_bin_start")[ ["BTC_w", "ALT_w"] ]
@@ -726,33 +792,39 @@ if use_benchmark:
     st.sidebar.write("**Select Assets and Weights:**")
 
     # Determine which preset (if any) is currently active to style buttons accordingly
-    btc_val = st.session_state.get("benchmark_btc")
-    eth_val = st.session_state.get("benchmark_eth")
+    def _effective_weight(asset_symbol: str) -> float:
+        key = f"benchmark_{asset_symbol.lower()}"
+        val = st.session_state.get(key, None)
+        if val is None:
+            return float(DEFAULT_BENCHMARK_WEIGHTS.get(asset_symbol, 0.0) * 100.0)
+        try:
+            return float(val)
+        except Exception:
+            return 0.0
 
-    def _is_zero_or_unset(val) -> bool:
-        return val is None or abs(float(val)) < 1e-9
+    def _is_zero_or_unset_val(v) -> bool:
+        try:
+            return abs(float(v)) < 1e-9
+        except Exception:
+            return True
 
-    # Check if all non-BTC assets are zero/unset
+    # Check if all non-BTC assets are zero using effective (default or session) weights
     others_zero_for_100 = all(
-        _is_zero_or_unset(st.session_state.get(f"benchmark_{asset.lower()}"))
+        _is_zero_or_unset_val(_effective_weight(asset))
         for asset in available_assets
         if asset != "BTC"
     )
-    # Check if all non-BTC/ETH assets are zero/unset
+    # Check if all non-BTC/ETH assets are zero using effective (default or session) weights
     others_zero_for_5050 = all(
-        _is_zero_or_unset(st.session_state.get(f"benchmark_{asset.lower()}"))
+        _is_zero_or_unset_val(_effective_weight(asset))
         for asset in available_assets
         if asset not in ("BTC", "ETH")
     )
 
-    is_100_btc_active = (
-        btc_val is not None and abs(float(btc_val) - 100.0) < 1e-9 and others_zero_for_100
-    )
-    is_5050_active = (
-        btc_val is not None and abs(float(btc_val) - 50.0) < 1e-9
-        and eth_val is not None and abs(float(eth_val) - 50.0) < 1e-9
-        and others_zero_for_5050
-    )
+    btc_eff = _effective_weight("BTC")
+    eth_eff = _effective_weight("ETH")
+    is_100_btc_active = abs(btc_eff - 100.0) < 1e-9 and others_zero_for_100
+    is_5050_active = abs(btc_eff - 50.0) < 1e-9 and abs(eth_eff - 50.0) < 1e-9 and others_zero_for_5050
 
     # Quick preset buttons with dynamic highlighting: only the active one is primary (red)
     col1, col2 = st.sidebar.columns(2)
