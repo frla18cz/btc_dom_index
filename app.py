@@ -792,33 +792,39 @@ if use_benchmark:
     st.sidebar.write("**Select Assets and Weights:**")
 
     # Determine which preset (if any) is currently active to style buttons accordingly
-    btc_val = st.session_state.get("benchmark_btc")
-    eth_val = st.session_state.get("benchmark_eth")
+    def _effective_weight(asset_symbol: str) -> float:
+        key = f"benchmark_{asset_symbol.lower()}"
+        val = st.session_state.get(key, None)
+        if val is None:
+            return float(DEFAULT_BENCHMARK_WEIGHTS.get(asset_symbol, 0.0) * 100.0)
+        try:
+            return float(val)
+        except Exception:
+            return 0.0
 
-    def _is_zero_or_unset(val) -> bool:
-        return val is None or abs(float(val)) < 1e-9
+    def _is_zero_or_unset_val(v) -> bool:
+        try:
+            return abs(float(v)) < 1e-9
+        except Exception:
+            return True
 
-    # Check if all non-BTC assets are zero/unset
+    # Check if all non-BTC assets are zero using effective (default or session) weights
     others_zero_for_100 = all(
-        _is_zero_or_unset(st.session_state.get(f"benchmark_{asset.lower()}"))
+        _is_zero_or_unset_val(_effective_weight(asset))
         for asset in available_assets
         if asset != "BTC"
     )
-    # Check if all non-BTC/ETH assets are zero/unset
+    # Check if all non-BTC/ETH assets are zero using effective (default or session) weights
     others_zero_for_5050 = all(
-        _is_zero_or_unset(st.session_state.get(f"benchmark_{asset.lower()}"))
+        _is_zero_or_unset_val(_effective_weight(asset))
         for asset in available_assets
         if asset not in ("BTC", "ETH")
     )
 
-    is_100_btc_active = (
-        btc_val is not None and abs(float(btc_val) - 100.0) < 1e-9 and others_zero_for_100
-    )
-    is_5050_active = (
-        btc_val is not None and abs(float(btc_val) - 50.0) < 1e-9
-        and eth_val is not None and abs(float(eth_val) - 50.0) < 1e-9
-        and others_zero_for_5050
-    )
+    btc_eff = _effective_weight("BTC")
+    eth_eff = _effective_weight("ETH")
+    is_100_btc_active = abs(btc_eff - 100.0) < 1e-9 and others_zero_for_100
+    is_5050_active = abs(btc_eff - 50.0) < 1e-9 and abs(eth_eff - 50.0) < 1e-9 and others_zero_for_5050
 
     # Quick preset buttons with dynamic highlighting: only the active one is primary (red)
     col1, col2 = st.sidebar.columns(2)
