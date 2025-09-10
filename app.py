@@ -526,20 +526,109 @@ if enable_fng_dynamic:
     )
 
     import pandas as pd
-    # Prepare default bin table (0..90 step 10)
-    default_bins = list(range(0, 100, 10))
-    fng_bins_df = pd.DataFrame({
-        "FNG_bin_start": default_bins,
-        "BTC_w": [btc_weight for _ in default_bins],
-        "ALT_w": [alt_weight for _ in default_bins],
-    })
-    st.sidebar.caption("Edit weights for each 10-point FNG bin (values are in leverage ×, e.g., 1.75 = 175%)")
-    fng_bins_df = st.sidebar.data_editor(
-        fng_bins_df,
-        num_rows="fixed",
-        hide_index=True,
-        use_container_width=True,
+    # Quick Designer vs Advanced Table
+    st.sidebar.markdown("### FNG Dynamic Allocation")
+    use_designer = st.sidebar.checkbox(
+        "Use Quick Designer (recommended)", value=True, help="Design weights with endpoints and curve; switch to table for fine tuning."
     )
+
+    # Default bins 0..90 step 10
+    default_bins = list(range(0, 100, 10))
+
+    # Helpers for curve shaping
+    def _shape_fn(mode: str, t: float) -> float:
+        # t in [0,1]
+        if mode == "Ease-in":
+            return t * t
+        if mode == "Ease-out":
+            return 1 - (1 - t) * (1 - t)
+        if mode == "S-curve":
+            # Smoothstep
+            return t * t * (3 - 2 * t)
+        return t  # Linear
+
+    if use_designer:
+        st.sidebar.caption("Set endpoints for BTC/ALT across Fear→Greed; preview then fine-tune if needed.")
+        design_mode = st.sidebar.radio(
+            "Design mode",
+            options=["Lock total leverage", "Independent weights"],
+            index=0,
+            help="Lock keeps BTC_w + ALT_w constant across FNG bins.",
+        )
+        shape = st.sidebar.selectbox(
+            "Curve shape",
+            options=["Linear", "Ease-in", "Ease-out", "S-curve"],
+            index=0,
+        )
+
+        if design_mode == "Lock total leverage":
+            total_lev = st.sidebar.slider(
+                "Total leverage (BTC+ALT, ×)", min_value=0.0, max_value=3.0,
+                value=float(btc_weight + alt_weight), step=0.05
+            )
+            btc_low = st.sidebar.slider(
+                "BTC at FNG=0", min_value=0.0, max_value=float(total_lev),
+                value=float(min(btc_weight, total_lev)), step=0.05
+            )
+            btc_high = st.sidebar.slider(
+                "BTC at FNG=90", min_value=0.0, max_value=float(total_lev),
+                value=float(min(max(btc_weight, 0.0), total_lev)), step=0.05
+            )
+            alt_low, alt_high = total_lev - btc_low, total_lev - btc_high
+        else:
+            btc_low = st.sidebar.slider(
+                "BTC at FNG=0", min_value=0.0, max_value=3.0, value=float(btc_weight), step=0.05
+            )
+            btc_high = st.sidebar.slider(
+                "BTC at FNG=90", min_value=0.0, max_value=3.0, value=float(btc_weight), step=0.05
+            )
+            alt_low = st.sidebar.slider(
+                "ALT at FNG=0", min_value=0.0, max_value=3.0, value=float(alt_weight), step=0.05
+            )
+            alt_high = st.sidebar.slider(
+                "ALT at FNG=90", min_value=0.0, max_value=3.0, value=float(alt_weight), step=0.05
+            )
+
+        # Build bins from designer
+        rows = []
+        for b in default_bins:
+            # Map 0..90 to 0..1
+            t = (b / 90.0) if b <= 90 else 1.0
+            tt = _shape_fn(shape, max(0.0, min(1.0, t)))
+            btc_w_b = btc_low + (btc_high - btc_low) * tt
+            alt_w_b = alt_low + (alt_high - alt_low) * tt
+            rows.append({"FNG_bin_start": b, "BTC_w": round(btc_w_b, 4), "ALT_w": round(alt_w_b, 4)})
+        fng_bins_df = pd.DataFrame(rows)
+
+        # Preview chart
+        prev = fng_bins_df.set_index("FNG_bin_start")[ ["BTC_w", "ALT_w"] ]
+        st.sidebar.line_chart(prev, height=140)
+
+        # Optional advanced editor
+        with st.sidebar.expander("Advanced table editor"):
+            st.caption("Values are leverage × (e.g., 1.75 = 175%).")
+            fng_bins_df = st.data_editor(
+                fng_bins_df,
+                num_rows="fixed",
+                hide_index=True,
+                use_container_width=True,
+                key="fng_bins_editor",
+            )
+    else:
+        # Advanced table only
+        fng_bins_df = pd.DataFrame({
+            "FNG_bin_start": default_bins,
+            "BTC_w": [btc_weight for _ in default_bins],
+            "ALT_w": [alt_weight for _ in default_bins],
+        })
+        st.sidebar.caption("Edit weights for each 10-point FNG bin (values are in leverage ×, e.g., 1.75 = 175%)")
+        fng_bins_df = st.sidebar.data_editor(
+            fng_bins_df,
+            num_rows="fixed",
+            hide_index=True,
+            use_container_width=True,
+            key="fng_bins_editor_adv",
+        )
     # Quick sanity note if lookahead active
 if selected_fng_policy == "tuesday_lookahead":
         st.sidebar.warning("POZOR: je aktivní politika LOOKAHEAD. K pondělí se přiřazuje úterní hodnota – může vzniknout rozdíl v řádu vteřin.")
