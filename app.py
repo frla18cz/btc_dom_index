@@ -856,7 +856,7 @@ if use_benchmark:
             min_value=0.0,
             max_value=100.0,
             value=default_val,
-            step=5.0,
+            step=1.0,
             key=key
         )
         
