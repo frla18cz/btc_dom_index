@@ -486,7 +486,7 @@ btc_weight = st.sidebar.slider(
     min_value=0.0,
     max_value=3.0,
     value=BACKTEST_BTC_WEIGHT,
-    step=0.1,
+    step=0.01,
     format="%.2f",
 )
 alt_weight = st.sidebar.slider(
@@ -494,7 +494,7 @@ alt_weight = st.sidebar.slider(
     min_value=0.0,
     max_value=3.0,
     value=BACKTEST_ALT_WEIGHT,
-    step=0.1,
+    step=0.01,
     format="%.2f",
 )
 
