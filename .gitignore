@@ -142,6 +142,7 @@ btcdom_top20_weights.csv
 # Ignore other CSV files
 *.csv
 *.json
+!data_for_web/data.json
 # Don't ignore necessary data file
 !top100_weekly_2021-2025.csv
 !data/fng_daily.csv
