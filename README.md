@@ -113,6 +113,16 @@ btc_dom_index/
 - **Coverage**: Top 100+ cryptocurrencies by market cap
 - **Exclusions**: Stablecoins, wrapped tokens, and other specified assets
 
+## Updating Web JSON
+
+The landing-page dataset (`data_for_web/data.json`) and helper script live under [`data_for_web/`](data_for_web/README.md). After refreshing the weekly snapshots, run:
+
+```bash
+python data_for_web/update_data.py --start-date 2023-01-02 --end-date <latest_monday>
+```
+
+Review the regenerated `summary` numbers and commit + push the JSON alongside any code changes.
+
 ## Performance Verification
 
 The system has been thoroughly tested and verified:
